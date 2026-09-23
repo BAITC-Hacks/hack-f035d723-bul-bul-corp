@@ -11,6 +11,11 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+from . import ai
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from .rating import calculate_rating
 from .schemas import (
@@ -177,31 +182,15 @@ def patch_task(task_id: str, payload: TaskPatch, x_demo_identity: str | None = H
 def questions(task_id: str, x_demo_identity: str | None = Header(default=None)) -> dict:
     actor, row = identity(x_demo_identity), task_row(task_id)
     require_owner(row, actor)
-    values = fields(row)
-    labels = (("context", "Какой контекст проблемы и почему она важна сейчас?"), ("need", "Какую потребность нужно закрыть?"),
-              ("users", "Кто будет пользоваться результатом?"), ("data_materials", "Какие данные и материалы уже доступны?"),
-              ("success_criteria", "Как измерить успех и в какой срок?"))
-    needed = [question for field, question in labels if not getattr(values, field).strip()]
-    fallback = ["Какие ограничения нужно учесть?", "Какой результат ожидается?", "Как проверить результат на пользователях?"]
-    return {"questions": (needed + fallback)[:5] if len(needed) < 3 else needed[:5]}
+    return {"questions": ai.questions(fields(row))}
 
 
 @app.post("/api/tasks/{task_id}/compose")
 def compose(task_id: str, payload: ComposeRequest, x_demo_identity: str | None = Header(default=None)) -> dict:
     actor, row = identity(x_demo_identity), task_row(task_id)
     require_owner(row, actor)
-    values = fields(row).model_dump()
-    for answer in payload.answers:
-        text = answer.answer.strip()
-        if not text:
-            continue
-        question = answer.question.lower()
-        target = next((field for field, words in {"context": ("контекст",), "need": ("потребн",), "users": ("польз", "кто"),
-                       "data_materials": ("данн", "материал"), "success_criteria": ("успех", "метрик", "срок"),
-                       "constraints": ("огранич",), "expected_result": ("результат",)}.items() if any(word in question for word in words)), None)
-        if target and not values[target]:
-            values[target] = text
-    return task_json(save_task(task_id, TaskFields.model_validate(values), False, bool(row["published"]), row["version"] + 1))
+    composed = ai.compose(fields(row), payload.answers)
+    return task_json(save_task(task_id, composed, False, bool(row["published"]), row["version"] + 1))
 
 
 @app.post("/api/tasks/{task_id}/confirm")
