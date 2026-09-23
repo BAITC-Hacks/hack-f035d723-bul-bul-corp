@@ -29,5 +29,6 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/tasks -Headers $he
 - `ba2b318`: добавлено раздельное хранение текущего и опубликованного рейтинга задачи.
 - Проверено: вопросы возвращают 5 вопросов для пустого черновика, compose сохраняет ответ пользователя и игнорирует неизвестные сведения.
 - Проверено: каталог сортирует опубликованные задачи по рейтингу, принимает фильтры `topic` и `level`, а опубликованная задача с низким рейтингом остаётся доступна.
-- Текущий шаг: следующий этап после push, предложения и решения бизнеса.
+- Проверено: две команды могут отправить предложения, выбор одного предложения не изменяет статус второго (`selected` и `pending`).
+- Текущий шаг: следующий этап после push, этапы и баллы команды.
 The API never calls an external AI provider in the MVP. The questions and compose endpoint use deterministic server-side validation and leave unknown fields empty. No API key is required or stored in Git.
