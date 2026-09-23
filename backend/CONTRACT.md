@@ -1,126 +1,170 @@
-# Backend API contract
+# API 1.1: контракт frontend / QA
 
-Base URL: `http://localhost:8000`. JSON is UTF-8. Every request that acts as a demo user sends `X-Demo-Identity: <id>`. The server accepts only IDs returned by `GET /api/demo-identities`; this is demo identity selection, not production authentication.
+Этот файл и `openapi.json` фиксируют реализованный контракт backend. Не является подтверждением, что другие участники уже приняли изменения. Корневой README принадлежит QA и здесь не редактируется.
 
-## Identities
+## Изменения для интеграции
 
-`GET /api/demo-identities` returns:
+- Неизвестные поля запроса запрещены, HTTP 422. Свободное описание передавайте в `context` или `need`, не в `description`.
+- Публичная карточка содержит опубликованные поля, рейтинг, `confirmed=true`, версию и время публикации; кабинет владельца получает редактируемую версию.
+- AI-ответы сохраняют прежние JSON-тела, но добавляют заголовок `X-AI-Source: openai|fallback`, доступный через CORS.
+- В каждом предложении добавлено `milestone: null|MilestoneResponse`.
+- В `GET /api/team/proposals` добавлено `team_points`.
+- Результат этапа требует непустые `description` и HTTP(S) `result_url`. Возврат требует непустой `comment`.
+- Пересдача обновляет тот же этап; один этап на предложение; подтверждение даёт 10 баллов один раз.
+- Смена решения по предложению после первой отправки результата запрещена, HTTP 409.
+- Демоидентичности дополнены пятью профилями команд и вторым бизнесом.
+- Рейтинг использует уточнённые детерминированные правила; при обновлении пересчитываются оценки сохранённых карточек из их собственных текущих/опубликованных полей.
 
-```json
-[
-  {"id":"business-demo","name":"ООО Ромашка","role":"business","team_id":null},
-  {"id":"team-alpha","name":"Команда Альфа","role":"team","team_id":"team-alpha"},
-  {"id":"team-beta","name":"Команда Бета","role":"team","team_id":"team-beta"}
-]
-```
+## Общие правила
 
-## Empty and required fields
+Адрес при локальном запуске: `http://localhost:8000`. UTF-8 JSON. Все бизнес-маршруты требуют `X-Demo-Identity` из `/api/demo-identities`. `/api/health`, `/api/demo-identities`, `/docs`, `/openapi.json` доступны без заголовка. Это переключение демопользователя, не защищённая production-авторизация.
 
-Task text fields are always present in task responses and default to `""`. The task create body may omit any field. The fields are `title`, `topic`, `context`, `need`, `users`, `data_materials`, `constraints`, `expected_result`, `success_criteria`, `contact`, and `consultation`.
+Успешные запросы возвращают HTTP 200. Запросы с телом требуют JSON-объект. Неизвестные ключи и `null` вместо строк дают 422. Опущенные необязательные поля используют значения по умолчанию. Точное определение каждого объекта, nullable-поля и ответы маршрутов находятся в `openapi.json` и `/docs`.
 
-Proposal fields `idea`, `plan`, and `duration` are required and must be non-empty. `prototype_url` is optional and defaults to `""`. Milestone `description` is required and must be non-empty. `result_url` and review `comment` are optional and default to `""`. PATCH fields are optional; omitted keys stay unchanged, while explicit empty strings clear fields.
+## Идентичности
 
-Task text fields reject explicit `null` with HTTP 422 and `validation_error`. Use `""` to clear a value.
-
-## Task response
-
-All task endpoints return the task object:
-
-```json
-{
-  "id":"uuid", "owner_id":"business-demo", "title":"", "topic":"",
-  "context":"", "need":"", "users":"", "data_materials":"",
-  "constraints":"", "expected_result":"", "success_criteria":"",
-  "contact":"", "consultation":"", "confirmed":false, "published":false,
-  "version":1, "rating": {"total":0,"level":"draft","categories":[],"missing":[]},
-  "created_at":"ISO-8601", "updated_at":"ISO-8601"
-}
-```
-
-## Status strings
-
-- Task flags: `confirmed` and `published` are booleans. A draft is `confirmed=false`; publication never occurs without confirmation. Editing any draft or published task sets `confirmed=false` and keeps the previous `published` value. Therefore a published task can have unconfirmed edits while the catalog continues showing the last saved published fields in this MVP contract. `POST /confirm` confirms the current editable fields and recalculates the rating. `POST /publish` requires confirmation.
-- Proposal `status`: `pending`, `selected`, `rejected`. The business can select or reject any proposal independently. Selecting one never changes another proposal.
-- Milestone `status`: `submitted`, `confirmed`, `changes_requested`. A confirmed milestone awards exactly 10 points once. Resubmission is represented by a new milestone; review of an already confirmed milestone is idempotent.
-
-## Endpoints
-
-- `POST /api/tasks`: business creates a draft; body is the task fields object.
-- `GET /api/tasks/{id}`: owner sees drafts; everyone with a valid identity can see published tasks.
-- `PATCH /api/tasks/{id}`: owner updates any subset of task fields.
-- `POST /api/tasks/{id}/questions`: owner receives `{ "questions": [string, ...] }`, at least three relevant questions for missing information.
-- `POST /api/tasks/{id}/compose`: owner sends `{ "answers": [{"question":string,"answer":string}] }`; unknown information stays empty and no facts are invented.
-- `POST /api/tasks/{id}/confirm`: owner confirms and receives the task with calculated rating.
-- `POST /api/tasks/{id}/publish`: owner publishes a confirmed task.
-- `GET /api/tasks?topic=<text>&level=<draft|working|ready|priority>`: catalog, published tasks only, descending rating total. No artificial proposal limit.
-- `GET /api/business/tasks`: current business's tasks.
-- `POST /api/tasks/{id}/proposals`: team body `{ "idea":string,"plan":string,"duration":string,"prototype_url":string }`.
-- `GET /api/tasks/{id}/proposals`: business owner or any team reads proposals.
-- `POST /api/proposals/{id}/decision`: owner body `{ "decision":"selected"|"rejected" }`.
-- `GET /api/team/proposals`: current team's proposals.
-- `POST /api/proposals/{id}/milestone`: selected team body `{ "description":string,"result_url":string }`.
-- `POST /api/milestones/{id}/review`: task owner body `{ "decision":"confirmed"|"changes_requested","comment":string }`.
-
-## Rating
-
-Only confirmation scores fields. Before confirmation `total` is zero, but `missing` and category bases explain what is absent. Categories and maximums are: `context_need` 20, `data_materials` 20, `expected_result` 15, `success_criteria` 15, `constraints` 10, `users` 10, `contact_consultation` 10. Empty or whitespace-only values score zero. Compound categories receive proportional points per populated subfield. Success criteria receive points only when a number and an explicit time, currency, percentage, quantity, or metric marker is present. Levels are `draft` 0-39, `working` 40-69, `ready` 70-89, `priority` 90-100. The response contains `total`, `level`, `categories[]` with `key`, `label`, `points`, `max_points`, `basis[]`, and `missing[]`.
-
-## Errors
-
-The API returns HTTP status plus this JSON shape, never a successful response with an error:
+`GET /api/demo-identities` → массив `Identity`:
 
 ```json
-{"code":"confirmation_required","message":"Сначала подтвердите задачу","field_errors":{"title":"..."}}
+{"id":"team-alpha","name":"Альфа","role":"team","team_id":"team-alpha","interests":["Услуги","Аналитика"],"skills":["Анализ данных","API"],"technologies":["Python","SQLite"]}
 ```
 
-`field_errors` is omitted when no field-level details exist. Typical codes: `invalid_identity` (401), `not_owner` (403), `business_required` (403), `team_required` (403), `private_task` (403), `task_not_found` (404), `proposal_not_found` (404), `milestone_not_found` (404), `confirmation_required` (409), `task_not_published` (409), and `proposal_not_selected` (409).
+Роли: `business`, `team`. Для бизнеса `team_id=null`, профильные массивы пустые. Доступны бизнесы `business-demo`, `business-second` и команды `team-alpha`, `team-beta`, `team-gamma`, `team-delta`, `team-epsilon`. Точные записи: `fixtures/demo-identities.json`.
 
-## Published snapshot fields
+## Карточки
 
-The task response contains `published_rating`, null until publication. Owner views expose the editable fields, rating, confirmation flag, version and timestamp. Catalog and non-owner views expose the complete published snapshot: fields, rating, `confirmed=true`, publication version and timestamp. PATCH and confirm never modify that snapshot. Publish copies confirmed fields and rating atomically. Concurrent changes detected during save/publish return HTTP 409 with `code=task_changed`; reload before retrying.
+`TaskFields` содержит ровно 11 строк: `title`, `topic`, `context`, `need`, `users`, `data_materials`, `constraints`, `expected_result`, `success_criteria`, `contact`, `consultation`.
 
-Existing databases are upgraded at startup. Historical publication timestamps/versions were not previously stored; migration initializes those from the available task metadata. Subsequent publications preserve the exact snapshot.
+Все поля необязательны при создании, по умолчанию `""`. В PATCH пропущенное поле сохраняется, `""` очищает. PATCH без фактического изменения не сбрасывает подтверждение. Пустые/пробельные сведения не получают баллы. Для полноты содержательность проверяет бизнес; сервер не выдумывает факты и не требует высокого рейтинга для публикации.
+
+Пример создания:
 
 ```json
-{
-  "rating": {
-    "total": 0,
-    "level": "draft",
-    "categories": [
-      {
-        "key": "context_need",
-        "label": "Контекст и потребность",
-        "points": 0,
-        "max_points": 20,
-        "basis": ["Заполнено полей: 0 из 2"]
-      }
-    ],
-    "missing": ["Контекст и потребность"]
-  },
-  "published_rating": null
-}
+{"title":"Распределение обращений","topic":"Услуги","context":"Компания вручную распределяет обращения между сотрудниками."}
 ```
 
-## Non-task response bodies
-
-`POST /questions` returns `{ "questions": ["...", "...", "..."] }`.
-
-`POST /proposals` and `POST /decision` return:
+`TaskResponse` объединяет все `TaskFields` и:
 
 ```json
-{
-  "id": "uuid", "task_id": "uuid", "team_id": "team-alpha",
-  "idea": "...", "plan": "...", "duration": "...",
-  "prototype_url": "", "status": "pending", "created_at": "ISO-8601"
-}
+{"id":"uuid","owner_id":"business-demo","confirmed":false,"published":false,"version":1,"rating":{"total":0,"level":"draft","categories":[],"missing":[]},"published_rating":null,"created_at":"2026-09-23T10:00:00+00:00","updated_at":"2026-09-23T10:00:00+00:00"}
 ```
 
-`POST /milestone` and `POST /review` return:
+В этом фрагменте `categories`/`missing` сокращены только для показа структуры: фактическая оценка всегда содержит семь категорий, описанных ниже. `published_rating` до публикации null, после неё объект Rating опубликованной версии.
+
+| Метод и путь | Тело | Ответ и доступ |
+|---|---|---|
+| POST `/api/tasks` | TaskFields, допустимо `{}` | TaskResponse; только business |
+| GET `/api/tasks/{id}` | нет | TaskResponse; владелец видит текущую версию, остальные только опубликованную |
+| PATCH `/api/tasks/{id}` | часть TaskFields | TaskResponse; только владелец |
+| POST `/api/tasks/{id}/questions` | нет | `{"questions":[string,string,string]}`; 3–5 разных вопросов; только владелец |
+| POST `/api/tasks/{id}/compose` | ComposeRequest | TaskResponse; только владелец |
+| POST `/api/tasks/{id}/confirm` | нет | TaskResponse; только владелец |
+| POST `/api/tasks/{id}/publish` | нет | TaskResponse; только владелец, текущая версия должна быть подтверждена |
+| GET `/api/tasks` | нет | `{"items":[TaskResponse]}`; любой демопользователь, только публичные снимки |
+| GET `/api/business/tasks` | нет | `{"items":[TaskResponse]}`; текущий business, текущие версии его задач |
+
+`ComposeRequest`:
 
 ```json
-{
-  "id": "uuid", "proposal_id": "uuid", "description": "...",
-  "result_url": "", "status": "submitted", "comment": "",
-  "points_awarded": 0
-}
+{"answers":[{"question":"Кто будет пользоваться результатом?","answer":"Операторы службы поддержки"}]}
 ```
+
+`answers` необязателен и равен `[]`; `question` обязателен, непустой после trim; `answer` по умолчанию `""`. Исходное описание берётся из текущих полей задачи. Поле `consultation` объединяет консультации и порядок обратной связи. Вопросы не меняют карточку. Compose сохраняет черновик, снимает подтверждение и не публикует. Пользователь может править любой результат через PATCH. Непустые существующие поля AI не перезаписывает.
+
+Жизненный цикл: draft → confirm → publish. Любое фактическое редактирование снимает подтверждение текущей версии и обнуляет её начисленные баллы. Старый публичный снимок остаётся неизменным. Confirm пересчитывает текущий рейтинг, но не публикует. Повторный publish переносит подтверждённые поля и рейтинг атомарно. Confirm уже подтверждённой версии и publish неизменённой публикации идемпотентны. Version увеличивается на изменение состояния/данных, без требования последовательной нумерации только редакций. Если карточка изменилась во время AI-запроса compose, сохранение отклоняется с 409 `task_changed`.
+
+### Каталог
+
+- `topic`: необязательная подстрока темы, без учёта регистра, крайние пробелы удаляются; пустое значение не фильтрует.
+- `level`: необязательное перечисление `draft|working|ready|priority`. Неизвестное значение, включая пустое, даёт 422.
+- Сортировка фиксирована: опубликованный `rating.total` по убыванию; при равенстве `id` по возрастанию. Параметра `sort` нет.
+- Рейтинг 0–39 не скрывает публикацию и не запрещает отклики. Неподтверждённый черновик без публикации не появляется в каталоге.
+
+## Рейтинг
+
+Объект Rating: `total:0..100`, `level`, `categories:[{key,label,points,max_points,basis:[string]}]`, `missing:[string]`. `missing` содержит названия неполных категорий; конкретные причины и поля перечислены в `basis`.
+
+| key | Поля и баллы |
+|---|---|
+| context_need | context 10 + need 10 |
+| data_materials | data_materials 20 |
+| expected_result | expected_result 15 |
+| success_criteria | success_criteria 15 |
+| constraints | constraints 10 |
+| users | users 10 |
+| contact_consultation | contact 5 + consultation 5 |
+
+Обычные поля оцениваются по наличию непробельного текста, без произвольного порога длины. Критерии требуют распознаваемую метрику с числом/единицей, количество поддерживаемых объектов или результат с числовым сроком. Принимаются `10 заявок за 7 дней`, `точность 90%`, `Время ответа не более 2 секунд`, `Прототип за 7 дней`. Не принимаются `kpi 1`, `90%`, `7 дней`, отдельная дата или номер версии. Полный конечный набор русских/английских правил расположен в `rating.py`; это проверяемая лексическая эвристика, не доказательство реалистичности результата.
+
+Контакт: email, телефон 10–15 цифр, @идентификатор или HTTP(S)-адрес. Консультации: вид взаимодействия плюс канал/периодичность/доступность без явного отказа. Например, `Еженедельный созвон; обратная связь в Telegram`. Просто имя или `да` не дают баллы этой категории.
+
+Без подтверждения total и начисления каждой категории равны нулю. Уровни: draft 0–39, working 40–69, ready 70–89, priority 90–100. Публичная оценка остаётся оценкой опубликованных сведений. Формула не использует AI, известность бизнеса или признаки команды.
+
+## Предложения и этапы
+
+`ProposalCreate`: обязательные непробельные `idea`, `plan`, `duration`; необязательный `prototype_url`, по умолчанию `""`. Непустая ссылка должна быть HTTP(S). Команда назначается из заголовка, не из тела. Число откликов не ограничено, в том числе от одной команды.
+
+`ProposalResponse`:
+
+```json
+{"id":"uuid","task_id":"uuid","team_id":"team-alpha","idea":"Распределение по категориям","plan":"Реализация и проверка на примерах","duration":"7 дней","prototype_url":"https://example.com/prototype","status":"pending","created_at":"2026-09-23T10:00:00+00:00","milestone":null}
+```
+
+Статусы: pending — на рассмотрении, selected — выбрано, rejected — отклонено. Решения независимы: выбор одной команды не меняет другие. Можно не выбирать никого. До отправки первого результата владелец может менять selected/rejected. После отправки результат фиксирует выбор команды; повтор того же решения допускается, смена даёт 409 `proposal_in_progress`.
+
+| Метод и путь | Тело | Ответ и доступ |
+|---|---|---|
+| POST `/api/tasks/{id}/proposals` | ProposalCreate | ProposalResponse; team, задача опубликована |
+| GET `/api/tasks/{id}/proposals` | нет | `{"items":[ProposalResponse]}`; бизнес-владелец или команды для публичной задачи |
+| POST `/api/proposals/{id}/decision` | `{"decision":"selected"}` или `rejected` | ProposalResponse; бизнес-владелец |
+| GET `/api/team/proposals` | нет | `{"items":[ProposalResponse],"team_points":10}`; team, только собственные отклики |
+| POST `/api/proposals/{id}/milestone` | MilestoneRequest | MilestoneResponse; автор выбранного предложения |
+| POST `/api/milestones/{id}/review` | ReviewRequest | MilestoneResponse; бизнес-владелец задачи |
+
+Предложения публичных задач доступны другим командам по текущему соглашению. Нет авторегистрации, автоматического назначения и автоматического отклонения остальных.
+
+`MilestoneRequest`:
+
+```json
+{"description":"Прототип с проверкой результата","result_url":"https://example.com/result"}
+```
+
+Оба поля обязательны и непробельные. `ReviewRequest`: `decision:confirmed|changes_requested`, `comment` необязателен для подтверждения, обязателен и непробельный при возврате.
+
+`MilestoneResponse`:
+
+```json
+{"id":"uuid","proposal_id":"uuid","description":"Прототип с проверкой результата","result_url":"https://example.com/result","status":"confirmed","comment":"","points_awarded":10}
+```
+
+| Исходное состояние | Действие | Итог |
+|---|---|---|
+| этапа нет | команда отправляет результат | submitted, 0 баллов |
+| submitted | бизнес возвращает с комментарием | changes_requested, 0 |
+| changes_requested | команда пересдаёт | submitted, тот же id, обновлённый текст/ссылка, комментарий очищается |
+| submitted | бизнес подтверждает | confirmed, 10 |
+| confirmed | повтор подтверждения | тот же результат, всё ещё 10 |
+| submitted/confirmed | повтор идентичной отправки | тот же результат без нового этапа |
+| submitted/confirmed | другая отправка | 409 milestone_locked |
+| changes_requested | подтверждение без пересдачи | 409 invalid_transition |
+| confirmed | возврат | 409 invalid_transition |
+
+Повтор одинакового решения проверки идемпотентен. Команда не подтверждает свои результаты. Итог команды — сумма однократных баллов её этапов, читается из team_points. Кабинеты восстанавливают этапы и комментарии из вложенного milestone в GET-списках. Уникальный индекс на proposal_id и сериализованные транзакции защищают параллельные отправки/подтверждения.
+
+## Ошибки
+
+```json
+{"code":"validation_error","message":"Некорректный запрос","field_errors":{"body":"Для возврата на доработку нужен комментарий"}}
+```
+
+`field_errors` присутствует для ошибок валидации; ключ — путь поля или `body`. Остальные ошибки имеют `code`, `message`. Неизвестный HTTP-маршрут также использует этот формат.
+
+- 401: invalid_identity.
+- 403: business_required, team_required, not_owner, not_team_owner, private_task.
+- 404: task_not_found, proposal_not_found, milestone_not_found; http_error для неизвестного маршрута.
+- 409: confirmation_required, task_not_published, task_changed, proposal_not_selected, proposal_in_progress, milestone_locked, invalid_transition.
+- 422: validation_error.
+- 500: internal_error, без внутренних подробностей в ответе.
+- 503: database_unavailable.
+
+Ошибки AI обрабатываются локальным режимом без раскрытия ключа и текста ошибки провайдера; источник виден в X-AI-Source. Нет ключа, лимит API, отказ модели и неполный/невалидный JSON не означают успешный ответ OpenAI.
