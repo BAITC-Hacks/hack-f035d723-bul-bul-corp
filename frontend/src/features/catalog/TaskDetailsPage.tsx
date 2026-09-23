@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import type { RatingLevel, TaskFields, TaskResponse } from "../../api/types";
 import { useDemoSession } from "../../app/DemoSession";
+import { ProposalPanel } from "../proposals/ProposalPanel";
 
 const ratingLabels: Record<RatingLevel, string> = {
   draft: "Черновик",
@@ -183,6 +184,7 @@ export function TaskDetailsPage() {
           )}
         </aside>
       </div>
+      <ProposalPanel taskId={task.id} />
     </article>
   );
 }
