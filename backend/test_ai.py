@@ -140,6 +140,22 @@ class AiTest(unittest.TestCase):
         with self.provider(timeout=True):
             self.assertEqual(ai.compose(fields, [answer]).model_dump(), expected)
 
+    def test_provider_cannot_erase_uncertainty_when_adding_known_facts(self):
+        fields = TaskFields(data_materials="Пока неизвестно", contact="Не знаю")
+        answer = Answer(question=ai.FIELD_QUESTIONS["data_materials"],
+                        answer="Есть синтетические CSV; доступ только после согласования.")
+        expected = fields.model_dump()
+        expected["data_materials"] += "\n" + answer.answer
+        for mutation in ({"data_materials": answer.answer}, {"contact": ""}):
+            with self.subTest(mutation=mutation):
+                value = {**expected, **mutation}
+                with self.provider(completion(json.dumps(value, ensure_ascii=False))):
+                    self.assertEqual(ai.compose(fields, [answer]).model_dump(), expected)
+                    self.assertEqual(ai.last_source.get(), "fallback")
+        with self.provider(completion(json.dumps(expected, ensure_ascii=False))):
+            self.assertEqual(ai.compose(fields, [answer]).model_dump(), expected)
+            self.assertEqual(ai.last_source.get(), "openai")
+
     def test_provider_accepts_distinct_missing_field_questions(self):
         selected = [ai.FIELD_QUESTIONS[name] for name in ("context", "need", "users")]
         with self.provider(completion(json.dumps({"questions": selected}))) as requests:
@@ -157,6 +173,23 @@ class AiTest(unittest.TestCase):
         with self.provider(completion(json.dumps({"questions": invalid}))):
             self.assertEqual(ai.questions(TaskFields()), fallback)
             self.assertEqual(ai.last_source.get(), "fallback")
+
+    def test_provider_cannot_return_entire_catalog_or_hide_truncation_as_openai(self):
+        fields = TaskFields(context="Обращения распределяются вручную.", need="Ускорить распределение.")
+        selected = [ai.FIELD_QUESTIONS[name] for name in (
+            "data_materials", "users", "expected_result", "success_criteria",
+            "constraints", "contact", "consultation",
+        )]
+        with self.provider(completion(json.dumps({"questions": selected}))):
+            result = ai.questions(fields)
+            self.assertEqual(ai.last_source.get(), "fallback")
+            self.assertEqual(len(result), 5)
+            self.assertEqual(len(set(result)), 5)
+            for name in ("data_materials", "users", "expected_result", "success_criteria"):
+                self.assertIn(ai.FIELD_QUESTIONS[name], result)
+        with self.provider(completion(json.dumps({"questions": selected[:5]}))):
+            self.assertEqual(ai.questions(fields), selected[:5])
+            self.assertEqual(ai.last_source.get(), "openai")
 
     def test_provider_cannot_reask_known_basics_or_skip_only_missing_field(self):
         fields = TaskFields(**{**self.KNOWN_FIELDS, "constraints": ""})
