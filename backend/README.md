@@ -31,5 +31,6 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/tasks -Headers $he
 - Проверено: каталог сортирует опубликованные задачи по рейтингу, принимает фильтры `topic` и `level`, а опубликованная задача с низким рейтингом остаётся доступна.
 - Проверено: две команды могут отправить предложения, выбор одного предложения не изменяет статус второго (`selected` и `pending`).
 - Проверено: команда не может подтвердить свой этап, бизнес получает `confirmed` и 10 баллов, повторная проверка остаётся идемпотентной.
-- Текущий шаг: финальная интеграционная проверка и запуск.
+- Проверено: полный сценарий прошёл через API, а опубликованная задача сохранилась после перезапуска Uvicorn и SQLite.
+- Текущий шаг: README и финальный push.
 The API never calls an external AI provider in the MVP. The questions and compose endpoint use deterministic server-side validation and leave unknown fields empty. No API key is required or stored in Git.
