@@ -9,6 +9,11 @@ from backend.schemas import TaskFields
 
 
 class TaskLifecycleTest(unittest.TestCase):
+    def setUp(self):
+        demo = patch.dict(os.environ, {'DEMO_MODE': 'true'})
+        demo.start()
+        self.addCleanup(demo.stop)
+
     def test_published_snapshot_survives_edits_and_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(main, 'DB_PATH', Path(directory) / 'tasks.sqlite3'):
@@ -56,20 +61,63 @@ class TaskLifecycleTest(unittest.TestCase):
                 client.post(url+'/publish',headers=owner)
                 published = client.get(url,headers=team).json()
                 question = client.post(url+'/questions',headers=owner).json()['questions'][0]
-                clarification = 'В названии важно выделить обращения юридических лиц.'
+                clarification = 'Данные доступны в CSV, доступ только после согласования.'
                 body = {'answers':[{'question':question,'answer':clarification}]}
                 result = client.post(url+'/compose',headers=owner,json=body)
                 self.assertEqual(result.status_code,200,result.text)
-                self.assertEqual(result.json()['title'], fields['title']+'\n'+clarification)
+                self.assertEqual(result.json()['data_materials'], fields['data_materials']+'\n'+clarification)
                 self.assertFalse(result.json()['confirmed'])
                 self.assertEqual(client.get(url,headers=team).json(),published)
                 self.assertEqual(client.post(url+'/publish',headers=owner).status_code,409)
                 retried = client.post(url+'/compose',headers=owner,json=body).json()
-                self.assertEqual(retried['title'],result.json()['title'])
+                self.assertEqual(retried,result.json())
                 client.post(url+'/confirm',headers=owner)
                 self.assertEqual(client.get(url,headers=team).json(),published)
                 client.post(url+'/publish',headers=owner)
-                self.assertEqual(client.get(url,headers=team).json()['title'],result.json()['title'])
+                self.assertEqual(client.get(url,headers=team).json()['data_materials'],result.json()['data_materials'])
+
+    def test_compose_without_changes_preserves_confirmed_published_card(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(main, 'DB_PATH', Path(directory) / 'tasks.sqlite3'), \
+                patch.dict(os.environ, {'AI_API_KEY': '', 'OPENAI_API_KEY': ''}):
+            with TestClient(main.app) as client:
+                owner = {'X-Demo-Identity': 'business-demo'}
+                task = client.post('/api/tasks', headers=owner, json={'users': 'Операторы'}).json()
+                url = '/api/tasks/' + task['id']
+                client.post(url+'/confirm', headers=owner)
+                published = client.post(url+'/publish', headers=owner).json()
+                for answers in ([], [{'question': main.ai.FIELD_QUESTIONS['users'], 'answer': '  '}],
+                                [{'question': main.ai.FIELD_QUESTIONS['users'], 'answer': 'Операторы'}]):
+                    response = client.post(url+'/compose', headers=owner, json={'answers': answers})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json(), published)
+                    self.assertEqual(client.post(url+'/publish', headers=owner).json(), published)
+
+    def test_unassigned_answer_rejects_whole_request_without_losing_state(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(main, 'DB_PATH', Path(directory) / 'tasks.sqlite3'), \
+                patch.dict(os.environ, {'AI_API_KEY': '', 'OPENAI_API_KEY': ''}):
+            with TestClient(main.app) as client:
+                owner = {'X-Demo-Identity': 'business-demo'}
+                task = client.post('/api/tasks', headers=owner, json={'context': 'Ручная обработка заявок'}).json()
+                url = '/api/tasks/' + task['id']
+                confirmed = client.post(url+'/confirm', headers=owner).json()
+                answers = [
+                    {'question': main.ai.FIELD_QUESTIONS['users'], 'answer': 'Операторы'},
+                    {'question': 'Что ещё?', 'answer': 'Выгрузка в CSV.\nДоступ после согласования.'},
+                ]
+                response = client.post(url+'/compose', headers=owner, json={'answers': answers})
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(response.json()['code'], 'unassigned_answers')
+                self.assertEqual(set(response.json()['field_errors']), {'answers.1.question'})
+                self.assertEqual(response.headers['X-AI-Source'], 'fallback')
+                self.assertEqual(client.get(url, headers=owner).json(), confirmed)
+                answers[1]['question'] = main.ai.FIELD_QUESTIONS['data_materials']
+                corrected = client.post(url+'/compose', headers=owner, json={'answers': answers})
+                self.assertEqual(corrected.status_code, 200, corrected.text)
+                self.assertEqual(corrected.json()['data_materials'], answers[1]['answer'])
+                self.assertEqual(corrected.json()['users'], 'Операторы')
+                self.assertFalse(corrected.json()['confirmed'])
 
     def test_unknown_card_gains_points_only_after_facts_and_confirmation(self):
         with tempfile.TemporaryDirectory() as directory, \

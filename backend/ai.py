@@ -105,7 +105,7 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
-def _json_completion(system: str, user: str) -> dict[str, Any]:
+def _json_completion(system: str, user: str, *, schema: dict[str, Any] | None = None) -> dict[str, Any]:
     client = _client()
     if client is None:
         raise ValueError("AI is not configured")
@@ -113,7 +113,10 @@ def _json_completion(system: str, user: str) -> dict[str, Any]:
         response = client.chat.completions.create(
             model=os.getenv("AI_MODEL", "gpt-4o-mini"),
             temperature=0,
-            response_format={"type": "json_object"},
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "task_questions", "strict": True, "schema": schema},
+            } if schema is not None else {"type": "json_object"},
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         )
     if not isinstance(response.choices, list) or not response.choices:
@@ -144,7 +147,7 @@ def questions(fields: TaskFields) -> list[str]:
         missing = substantive
     candidates = [FIELD_QUESTIONS[name] for name in missing]
     if len(candidates) < 3:
-        for name in missing or FIELDS:
+        for name in missing or QUESTION_PRIORITY:
             candidates.extend(CLARIFICATIONS[name])
     fallback = candidates[:5] if len(missing) >= 3 else candidates[:3]
     if not os.getenv("AI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
@@ -159,9 +162,24 @@ def questions(fields: TaskFields) -> list[str]:
             "missing_fields is ordered by priority; select questions for the highest-priority fields first. "
             "The server determines missing facts using rating eligibility, not just empty strings. "
             "When fewer than 3 fields are missing, include every missing-field question before clarifications. "
+            "When no fields are missing, ask only clarifications, not already answered basic questions. "
+            "allowed_questions is also ordered by priority; prefer earlier questions when equally useful. "
             "Before returning JSON, check the array length against the requested count. "
             "Never publish, confirm or rate a task.",
             json.dumps({"task": fields.model_dump(), "missing_fields": missing, "allowed_questions": candidates}, ensure_ascii=False),
+            schema={
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": candidates},
+                        "minItems": 3,
+                        "maxItems": 5,
+                    },
+                },
+                "required": ["questions"],
+                "additionalProperties": False,
+            },
         )
         result = value.get("questions")
         if set(value) != {"questions"} or not isinstance(result, list) or not 3 <= len(result) <= 5:

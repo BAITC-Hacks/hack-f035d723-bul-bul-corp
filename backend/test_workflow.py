@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +13,9 @@ from backend.seed import seed
 
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
+        demo = patch.dict(os.environ, {'DEMO_MODE': 'true'})
+        demo.start()
+        self.addCleanup(demo.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.database = patch.object(main, 'DB_PATH', Path(self.directory.name) / 'test.sqlite3')
@@ -130,6 +134,70 @@ class WorkflowTests(unittest.TestCase):
         teams = [identity for identity in identities if identity['role']=='team']
         self.assertEqual(len(teams),5)
         self.assertTrue(all(team['interests'] and team['skills'] and team['technologies'] for team in teams))
+
+    def test_assignment_scenario_from_weak_description_to_earned_points(self):
+        seed()
+        facts = {
+            'context': 'Обращения передаются между отделами вручную',
+            'users': 'Операторы поддержки',
+            'data_materials': 'Синтетические обращения в CSV',
+            'constraints': 'Без передачи персональных данных, срок две недели',
+            'expected_result': 'Прототип маршрутизации обращений',
+            'success_criteria': 'Точность 90%',
+            'contact': 'demo@example.com',
+            'consultation': 'Еженедельный созвон и обратная связь по почте',
+        }
+        task = self.post('/tasks', {'need': 'Обращения теряются, нужна помощь'})
+        url = '/tasks/' + task['id']
+        self.assertEqual(task['rating']['total'], 0)
+        weak = self.post(url+'/confirm')
+        self.assertEqual(weak['rating']['total'], 10)
+        self.assertTrue(weak['rating']['missing'])
+        self.post(url+'/publish')
+        catalog = self.client.get('/api/tasks', headers=self.team).json()['items']
+        self.assertEqual(catalog[-1]['id'], task['id'])
+        first = self.proposal(task['id'])  # Low rating must not block an offer.
+        with patch.dict(os.environ, {'AI_API_KEY': '', 'OPENAI_API_KEY': ''}):
+            for _ in range(2):
+                questions = self.post(url+'/questions')['questions']
+                self.assertGreaterEqual(len(questions), 3)
+                answers = [
+                    {'question': q, 'answer': facts[main.ai._question_field(q)]}
+                    for q in questions if main.ai._question_field(q) in facts
+                ]
+                composed = self.post(url+'/compose', {'answers': answers})
+                self.assertFalse(composed['confirmed'])
+                self.assertEqual(composed['rating']['total'], 0)
+                self.post(url+'/publish', status=409)
+        edited = self.client.patch('/api'+url, headers=self.business,
+                                   json={'title': 'Маршрутизация обращений', 'topic': 'Поддержка'})
+        self.assertEqual(edited.status_code, 200)
+        ready = self.post(url+'/confirm')
+        for name, fact in facts.items():
+            self.assertEqual(ready[name], fact)
+        self.assertEqual(ready['rating']['total'], 100)
+        self.assertEqual(ready['rating']['missing'], [])
+        self.assertEqual(sum(item['points'] for item in ready['rating']['categories']), 100)
+        public = self.client.get('/api'+url, headers=self.beta).json()
+        self.assertEqual(public['rating']['total'], 10)
+        self.post(url+'/publish')
+        catalog = self.client.get('/api/tasks', headers=self.beta).json()['items']
+        totals = [item['rating']['total'] for item in catalog]
+        self.assertEqual(totals, sorted(totals, reverse=True))
+        self.assertEqual(next(item for item in catalog if item['id']==task['id'])['rating']['total'], 100)
+        filtered = self.client.get('/api/tasks?topic=Поддержка&level=priority', headers=self.beta).json()['items']
+        self.assertIn(task['id'], [item['id'] for item in filtered])
+        second = self.proposal(task['id'], self.beta)
+        self.assertEqual(first['status'], 'pending')
+        self.assertEqual(second['status'], 'pending')
+        self.post('/proposals/'+first['id']+'/decision', {'decision': 'selected'})
+        self.post('/proposals/'+second['id']+'/decision', {'decision': 'rejected'})
+        stage = self.post('/proposals/'+first['id']+'/milestone',
+                          {'description': 'Прототип и результаты проверки', 'result_url': 'https://example.com/result'}, self.team)
+        self.assertEqual(self.client.get('/api/team/proposals', headers=self.team).json()['team_points'], 0)
+        for _ in range(2):
+            self.post('/milestones/'+stage['id']+'/review', {'decision': 'confirmed'})
+            self.assertEqual(self.client.get('/api/team/proposals', headers=self.team).json()['team_points'], 10)
 
     def test_legacy_duplicate_milestones_archived_without_double_points(self):
         proposal_id = self.selected()

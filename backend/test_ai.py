@@ -75,6 +75,23 @@ class AiTest(unittest.TestCase):
         self.assertEqual(set(result), {ai.FIELD_QUESTIONS["constraints"], *ai.CLARIFICATIONS["constraints"]})
         self.assertEqual(ai.last_source.get(), "fallback")
 
+    def test_complete_card_gets_substantive_clarifications(self):
+        fields = TaskFields(**self.KNOWN_FIELDS)
+        questions = ai.questions(fields)
+        self.assertGreaterEqual(len(questions), 3)
+        self.assertEqual(len(set(questions)), len(questions))
+        self.assertTrue(all(ai._question_field(question) not in ('title', 'topic') for question in questions))
+        # A complete card must never re-ask basics, even if the provider ignores
+        # its schema; valid clarifications must remain usable as OpenAI output.
+        basics = [ai.FIELD_QUESTIONS[name] for name in ("data_materials", "users", "expected_result")]
+        with self.provider(completion(json.dumps({"questions": basics}))):
+            self.assertEqual(ai.questions(fields), questions)
+            self.assertEqual(ai.last_source.get(), "fallback")
+        clarifications = [ai.CLARIFICATIONS[name][1] for name in ("data_materials", "users", "success_criteria")]
+        with self.provider(completion(json.dumps({"questions": clarifications}))):
+            self.assertEqual(ai.questions(fields), clarifications)
+            self.assertEqual(ai.last_source.get(), "openai")
+
     def test_every_missing_field_can_be_asked_without_reasking_known_basics(self):
         for missing in ai.FIELDS:
             with self.subTest(missing=missing):

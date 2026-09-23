@@ -9,13 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import ai
+from . import ai, auth
 from .rating import calculate_rating
 from .schemas import (
     ComposeRequest, DecisionRequest, ErrorResponse, Identity, Level,
@@ -75,6 +75,7 @@ def init_db() -> None:
         );
         ''')
     with db(write=True) as connection:
+        auth.init_tables(connection)
         columns = {row['name'] for row in connection.execute('PRAGMA table_info(tasks)')}
         for name, definition in (
             ('published_fields', "TEXT NOT NULL DEFAULT '{}'"),
@@ -112,9 +113,21 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title='AI Sana Backend', version='1.1.0', lifespan=lifespan,
-              responses={status: {'model': ErrorResponse} for status in (401, 403, 404, 409, 422, 500, 503)})
-app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'], expose_headers=['X-AI-Source'])
+app = FastAPI(title='AI Sana Backend', version='1.2.0', lifespan=lifespan,
+              responses={status: {'model': ErrorResponse} for status in (401, 403, 404, 409, 422, 429, 500, 503)})
+app.add_middleware(CORSMiddleware, allow_origins=auth.frontend_origins(), allow_credentials=True,
+                   allow_methods=['GET', 'POST', 'PATCH', 'OPTIONS'],
+                   allow_headers=['Content-Type', 'X-CSRF-Token', 'X-Demo-Identity'],
+                   expose_headers=['X-AI-Source', 'Retry-After'])
+app.include_router(auth.router)
+
+
+@app.middleware('http')
+async def private_api_responses(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -142,13 +155,6 @@ async def unexpected_error(_: Request, exc: Exception) -> JSONResponse:
 
 def fail(status: int, code: str, message: str):
     raise HTTPException(status, detail={'code':code, 'message':message})
-
-
-def identity(identity_id: str | None) -> dict:
-    actor = next((item for item in IDENTITIES if item['id'] == identity_id), None)
-    if actor is None:
-        fail(401, 'invalid_identity', 'Передайте допустимый X-Demo-Identity')
-    return actor
 
 
 def require_role(actor: dict, role: str):
@@ -206,12 +212,13 @@ def health() -> dict[str, str]:
 
 @app.get('/api/demo-identities', response_model=list[Identity])
 def demo_identities():
+    if not auth.demo_enabled():
+        fail(404, 'demo_disabled', 'Демонстрационный режим выключен')
     return IDENTITIES
 
 
 @app.post('/api/tasks', response_model=TaskResponse)
-def create_task(payload: TaskCreate, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def create_task(payload: TaskCreate, actor: dict = Depends(auth.current_identity)):
     require_role(actor, 'business')
     task_id, timestamp = str(uuid.uuid4()), now()
     values = TaskFields.model_validate(payload.model_dump())
@@ -222,8 +229,7 @@ def create_task(payload: TaskCreate, x_demo_identity: str | None = Header(defaul
 
 
 @app.get('/api/tasks/{task_id}', response_model=TaskResponse)
-def get_task(task_id: str, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def get_task(task_id: str, actor: dict = Depends(auth.current_identity)):
     with db() as connection:
         row = task_row(connection, task_id)
         if row['owner_id'] != actor['id'] and not row['published']:
@@ -232,8 +238,7 @@ def get_task(task_id: str, x_demo_identity: str | None = Header(default=None)):
 
 
 @app.patch('/api/tasks/{task_id}', response_model=TaskResponse)
-def patch_task(task_id: str, payload: TaskPatch, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def patch_task(task_id: str, payload: TaskPatch, actor: dict = Depends(auth.current_identity)):
     with db(write=True) as connection:
         row = task_row(connection, task_id)
         require_owner(row, actor)
@@ -246,8 +251,7 @@ def patch_task(task_id: str, payload: TaskPatch, x_demo_identity: str | None = H
 
 
 @app.post('/api/tasks/{task_id}/questions', response_model=QuestionResponse)
-def questions(task_id: str, response: Response, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def questions(task_id: str, response: Response, actor: dict = Depends(auth.current_identity)):
     with db() as connection:
         row = task_row(connection, task_id)
         require_owner(row, actor)
@@ -257,23 +261,37 @@ def questions(task_id: str, response: Response, x_demo_identity: str | None = He
 
 
 @app.post('/api/tasks/{task_id}/compose', response_model=TaskResponse)
-def compose(task_id: str, payload: ComposeRequest, response: Response, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def compose(task_id: str, payload: ComposeRequest, response: Response, actor: dict = Depends(auth.current_identity)):
     with db() as connection:
         row = task_row(connection, task_id)
         require_owner(row, actor)
     result = ai.compose(TaskFields.model_validate_json(row['fields']), payload.answers)
     response.headers['X-AI-Source'] = ai.last_source.get()
+    unsaved = {
+        f'answers.{index}.question': 'Не удалось определить поле. Используйте вопрос из /questions или внесите ответ через PATCH.'
+        for index, answer in enumerate(payload.answers)
+        if answer.answer.strip() and not any(
+            f'\n{answer.answer.strip()}\n' in f'\n{value}\n'
+            for value in result.model_dump().values()
+        )
+    }
+    if unsaved:
+        raise HTTPException(422, detail={
+            'code': 'unassigned_answers',
+            'message': 'Не все ответы удалось перенести в карточку. Изменения не сохранены.',
+            'field_errors': unsaved,
+        }, headers={'X-AI-Source': ai.last_source.get()})
     with db(write=True) as connection:
         current = task_row(connection, task_id)
         if current['version'] != row['version']:
             fail(409, 'task_changed', 'Задача изменена; загрузите актуальную версию')
+        if result == TaskFields.model_validate_json(current['fields']):
+            return task_json(current)
         return update_fields(connection, current, result)
 
 
 @app.post('/api/tasks/{task_id}/confirm', response_model=TaskResponse)
-def confirm(task_id: str, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def confirm(task_id: str, actor: dict = Depends(auth.current_identity)):
     with db(write=True) as connection:
         row = task_row(connection, task_id)
         require_owner(row, actor)
@@ -284,8 +302,7 @@ def confirm(task_id: str, x_demo_identity: str | None = Header(default=None)):
 
 
 @app.post('/api/tasks/{task_id}/publish', response_model=TaskResponse)
-def publish(task_id: str, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def publish(task_id: str, actor: dict = Depends(auth.current_identity)):
     with db(write=True) as connection:
         row = task_row(connection, task_id)
         require_owner(row, actor)
@@ -298,8 +315,7 @@ def publish(task_id: str, x_demo_identity: str | None = Header(default=None)):
 
 
 @app.get('/api/tasks', response_model=TaskList)
-def catalog(topic: str | None = None, level: Level | None = None, x_demo_identity: str | None = Header(default=None)):
-    identity(x_demo_identity)
+def catalog(topic: str | None = None, level: Level | None = None, actor: dict = Depends(auth.current_identity)):
     with db() as connection:
         rows = connection.execute("SELECT * FROM tasks WHERE published=1 ORDER BY json_extract(published_rating,'$.total') DESC, id ASC").fetchall()
     items = [task_json(row, True) for row in rows]
@@ -311,16 +327,14 @@ def catalog(topic: str | None = None, level: Level | None = None, x_demo_identit
 
 
 @app.get('/api/business/tasks', response_model=TaskList)
-def business_tasks(x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def business_tasks(actor: dict = Depends(auth.current_identity)):
     require_role(actor, 'business')
     with db() as connection:
         return {'items':[task_json(row) for row in connection.execute('SELECT * FROM tasks WHERE owner_id=? ORDER BY updated_at DESC,id', (actor['id'],))]}
 
 
 @app.post('/api/tasks/{task_id}/proposals', response_model=ProposalResponse)
-def create_proposal(task_id: str, payload: ProposalCreate, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def create_proposal(task_id: str, payload: ProposalCreate, actor: dict = Depends(auth.current_identity)):
     require_role(actor, 'team')
     with db(write=True) as connection:
         row = task_row(connection, task_id)
@@ -333,8 +347,7 @@ def create_proposal(task_id: str, payload: ProposalCreate, x_demo_identity: str 
 
 
 @app.get('/api/tasks/{task_id}/proposals', response_model=ProposalList)
-def proposals(task_id: str, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def proposals(task_id: str, actor: dict = Depends(auth.current_identity)):
     with db() as connection:
         row = task_row(connection, task_id)
         if actor['role'] == 'business':
@@ -345,8 +358,7 @@ def proposals(task_id: str, x_demo_identity: str | None = Header(default=None)):
 
 
 @app.post('/api/proposals/{proposal_id}/decision', response_model=ProposalResponse)
-def decision(proposal_id: str, payload: DecisionRequest, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def decision(proposal_id: str, payload: DecisionRequest, actor: dict = Depends(auth.current_identity)):
     with db(write=True) as connection:
         proposal = proposal_row(connection, proposal_id)
         require_owner(task_row(connection, proposal['task_id']), actor)
@@ -358,8 +370,7 @@ def decision(proposal_id: str, payload: DecisionRequest, x_demo_identity: str | 
 
 
 @app.get('/api/team/proposals', response_model=TeamProposalList)
-def team_proposals(x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def team_proposals(actor: dict = Depends(auth.current_identity)):
     require_role(actor, 'team')
     with db() as connection:
         rows = connection.execute('SELECT * FROM proposals WHERE team_id=? ORDER BY created_at DESC,id', (actor['team_id'],)).fetchall()
@@ -369,8 +380,7 @@ def team_proposals(x_demo_identity: str | None = Header(default=None)):
 
 
 @app.post('/api/proposals/{proposal_id}/milestone', response_model=MilestoneResponse)
-def milestone(proposal_id: str, payload: MilestoneRequest, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def milestone(proposal_id: str, payload: MilestoneRequest, actor: dict = Depends(auth.current_identity)):
     require_role(actor, 'team')
     with db(write=True) as connection:
         proposal = proposal_row(connection, proposal_id)
@@ -393,8 +403,7 @@ def milestone(proposal_id: str, payload: MilestoneRequest, x_demo_identity: str 
 
 
 @app.post('/api/milestones/{milestone_id}/review', response_model=MilestoneResponse)
-def review(milestone_id: str, payload: ReviewRequest, x_demo_identity: str | None = Header(default=None)):
-    actor = identity(x_demo_identity)
+def review(milestone_id: str, payload: ReviewRequest, actor: dict = Depends(auth.current_identity)):
     require_role(actor, 'business')
     with db(write=True) as connection:
         row = connection.execute('SELECT * FROM milestones WHERE id=?', (milestone_id,)).fetchone()
