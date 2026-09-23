@@ -45,6 +45,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, fields TEXT NOT NULL,
             published_fields TEXT NOT NULL DEFAULT '{}',
+            published_rating TEXT,
             confirmed INTEGER NOT NULL DEFAULT 0, published INTEGER NOT NULL DEFAULT 0,
             version INTEGER NOT NULL DEFAULT 1, rating TEXT NOT NULL,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -64,6 +65,8 @@ def init_db() -> None:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(tasks)")}
         if "published_fields" not in columns:
             connection.execute("ALTER TABLE tasks ADD COLUMN published_fields TEXT NOT NULL DEFAULT '{}'")
+        if "published_rating" not in columns:
+            connection.execute("ALTER TABLE tasks ADD COLUMN published_rating TEXT")
 
 
 @app.on_event("startup")
@@ -108,9 +111,12 @@ def fields(row: sqlite3.Row) -> TaskFields:
 def task_json(row: sqlite3.Row, published_view: bool = False) -> dict:
     source = row["published_fields"] if published_view and row["published_fields"] != "{}" else row["fields"]
     values = TaskFields.model_validate(json.loads(source)).model_dump()
+    current_rating = json.loads(row["rating"])
+    published_rating = json.loads(row["published_rating"]) if row["published_rating"] else None
     values.update({"id": row["id"], "owner_id": row["owner_id"], "confirmed": bool(row["confirmed"]),
                    "published": bool(row["published"]), "version": row["version"],
-                   "rating": json.loads(row["rating"]), "created_at": row["created_at"], "updated_at": row["updated_at"]})
+                   "rating": published_rating if published_view and published_rating else current_rating,
+                   "published_rating": published_rating, "created_at": row["created_at"], "updated_at": row["updated_at"]})
     return values
 
 
@@ -146,11 +152,9 @@ def create_task(payload: TaskCreate, x_demo_identity: str | None = Header(defaul
     task_id, timestamp = str(uuid.uuid4()), now()
     values = TaskFields.model_validate(payload.model_dump())
     with db() as connection:
-        connection.execute("INSERT INTO tasks (id, owner_id, fields, published_fields, confirmed, published, version, rating, created_at, updated_at) VALUES (?, ?, ?, '{}', 0, 0, 1, ?, ?, ?)",
+        connection.execute("INSERT INTO tasks (id, owner_id, fields, published_fields, published_rating, confirmed, published, version, rating, created_at, updated_at) VALUES (?, ?, ?, '{}', NULL, 0, 0, 1, ?, ?, ?)",
                            (task_id, actor["id"], values.model_dump_json(), calculate_rating(values).model_dump_json(), timestamp, timestamp))
     return task_json(task_row(task_id))
-
-
 @app.get("/api/tasks/{task_id}")
 def get_task(task_id: str, x_demo_identity: str | None = Header(default=None)) -> dict:
     actor = identity(x_demo_identity)
@@ -214,25 +218,24 @@ def publish(task_id: str, x_demo_identity: str | None = Header(default=None)) ->
     if not row["confirmed"]:
         fail(409, "confirmation_required", "Сначала подтвердите задачу")
     current = fields(row)
+    rating = calculate_rating(current, confirmed=True)
     saved = save_task(task_id, current, True, True, row["version"] + 1)
     with db() as connection:
-        connection.execute("UPDATE tasks SET published_fields=? WHERE id=?", (current.model_dump_json(), task_id))
-    return task_json(saved)
+        connection.execute("UPDATE tasks SET published_fields=?, published_rating=? WHERE id=?", (current.model_dump_json(), rating.model_dump_json(), task_id))
+    return task_json(task_row(task_id))
 
 
 @app.get("/api/tasks")
 def catalog(topic: str | None = None, level: str | None = Query(default=None), x_demo_identity: str | None = Header(default=None)) -> dict:
     identity(x_demo_identity)
     with db() as connection:
-        rows = connection.execute("SELECT * FROM tasks WHERE published=1 ORDER BY json_extract(rating, '$.total') DESC").fetchall()
+        rows = connection.execute("SELECT * FROM tasks WHERE published=1 ORDER BY json_extract(COALESCE(published_rating, rating), '$.total') DESC").fetchall()
     items = [task_json(row, published_view=True) for row in rows]
     if topic:
         items = [item for item in items if topic.lower() in item["topic"].lower()]
     if level:
         items = [item for item in items if item["rating"]["level"] == level]
     return {"items": items}
-
-
 @app.get("/api/business/tasks")
 def business_tasks(x_demo_identity: str | None = Header(default=None)) -> dict:
     actor = identity(x_demo_identity)

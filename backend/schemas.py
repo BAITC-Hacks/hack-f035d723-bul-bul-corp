@@ -84,6 +84,7 @@ class TaskResponse(TaskFields):
     published: bool
     version: int
     rating: Rating
+    published_rating: Rating | None
     created_at: str
     updated_at: str
 
