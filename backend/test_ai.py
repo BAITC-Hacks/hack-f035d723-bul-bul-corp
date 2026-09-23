@@ -103,9 +103,33 @@ class AiTest(unittest.TestCase):
             Answer(question=ai.CLARIFICATIONS["constraints"][0], answer="Данные нельзя передавать наружу."),
             Answer(question="Неясный вопрос?", answer="Неизвестный факт."),
         ])
-        self.assertEqual(result.title, "Original title")
+        self.assertEqual(result.title, "Original title\nReplacement title")
         self.assertEqual(result.constraints, "Бюджет не согласован.\nДанные нельзя передавать наружу.")
         self.assertEqual(result.context, "")
+
+    def test_clarification_retains_old_facts_and_deduplicates_retries(self):
+        fields = TaskFields(constraints="Бюджет не согласован.")
+        answers = [Answer(question=ai.CLARIFICATIONS["constraints"][0],
+                          answer="Данные нельзя передавать наружу.\nДоступ только после согласования.")]
+        expected = fields.constraints + "\n" + answers[0].answer
+        result = ai.compose(fields, answers)
+        self.assertEqual(result.constraints, expected)
+        self.assertEqual(ai.compose(result, answers).constraints, expected)
+
+    def test_provider_and_timeout_preserve_clarification_on_filled_field(self):
+        fields = TaskFields(users="Операторы")
+        answer = Answer(question=ai.CLARIFICATIONS["users"][0], answer="Первую проверку проведут два старших оператора.")
+        expected = fields.model_dump()
+        expected["users"] += "\n" + answer.answer
+        with self.provider(completion(json.dumps(expected, ensure_ascii=False))):
+            self.assertEqual(ai.compose(fields, [answer]).model_dump(), expected)
+            self.assertEqual(ai.last_source.get(), "openai")
+        # A valid-looking model answer that drops clarification is not accepted.
+        with self.provider(completion(fields.model_dump_json())):
+            self.assertEqual(ai.compose(fields, [answer]).model_dump(), expected)
+            self.assertEqual(ai.last_source.get(), "fallback")
+        with self.provider(timeout=True):
+            self.assertEqual(ai.compose(fields, [answer]).model_dump(), expected)
 
     def test_provider_accepts_distinct_missing_field_questions(self):
         selected = [ai.FIELD_QUESTIONS[name] for name in ("context", "need", "users")]
