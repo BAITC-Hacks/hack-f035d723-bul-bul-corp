@@ -6,6 +6,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from contextlib import contextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -38,10 +39,15 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def db() -> sqlite3.Connection:
+@contextmanager
+def db():
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def init_db() -> None:
@@ -72,6 +78,17 @@ def init_db() -> None:
             connection.execute("ALTER TABLE tasks ADD COLUMN published_fields TEXT NOT NULL DEFAULT '{}'")
         if "published_rating" not in columns:
             connection.execute("ALTER TABLE tasks ADD COLUMN published_rating TEXT")
+        if "published_version" not in columns:
+            connection.execute("ALTER TABLE tasks ADD COLUMN published_version INTEGER")
+        if "published_updated_at" not in columns:
+            connection.execute("ALTER TABLE tasks ADD COLUMN published_updated_at TEXT")
+        for row in connection.execute("SELECT * FROM tasks WHERE published=1 AND published_version IS NULL").fetchall():
+            snapshot = row["published_fields"] if row["published_fields"] != "{}" else row["fields"]
+            score = row["published_rating"] or calculate_rating(TaskFields.model_validate_json(snapshot), confirmed=True).model_dump_json()
+            connection.execute(
+                "UPDATE tasks SET published_fields=?, published_rating=?, published_version=?, published_updated_at=? WHERE id=?",
+                (snapshot, score, row["version"], row["updated_at"], row["id"]),
+            )
 
 
 @app.on_event("startup")
@@ -114,14 +131,15 @@ def fields(row: sqlite3.Row) -> TaskFields:
 
 
 def task_json(row: sqlite3.Row, published_view: bool = False) -> dict:
-    source = row["published_fields"] if published_view and row["published_fields"] != "{}" else row["fields"]
-    values = TaskFields.model_validate(json.loads(source)).model_dump()
+    source = row["published_fields"] if published_view else row["fields"]
+    values = TaskFields.model_validate_json(source).model_dump()
     current_rating = json.loads(row["rating"])
     published_rating = json.loads(row["published_rating"]) if row["published_rating"] else None
-    values.update({"id": row["id"], "owner_id": row["owner_id"], "confirmed": bool(row["confirmed"]),
-                   "published": bool(row["published"]), "version": row["version"],
-                   "rating": published_rating if published_view and published_rating else current_rating,
-                   "published_rating": published_rating, "created_at": row["created_at"], "updated_at": row["updated_at"]})
+    values.update({"id": row["id"], "owner_id": row["owner_id"], "confirmed": True if published_view else bool(row["confirmed"]),
+                   "published": bool(row["published"]), "version": row["published_version"] if published_view else row["version"],
+                   "rating": published_rating if published_view else current_rating,
+                   "published_rating": published_rating, "created_at": row["created_at"],
+                   "updated_at": row["published_updated_at"] if published_view else row["updated_at"]})
     return values
 
 
@@ -134,8 +152,10 @@ def save_task(task_id: str, values: TaskFields, confirmed: bool, published: bool
     timestamp = now()
     rating = calculate_rating(values, confirmed=confirmed).model_dump_json()
     with db() as connection:
-        connection.execute("UPDATE tasks SET fields=?, confirmed=?, published=?, version=?, rating=?, updated_at=? WHERE id=?",
-                           (values.model_dump_json(), int(confirmed), int(published), version, rating, timestamp, task_id))
+        updated = connection.execute("UPDATE tasks SET fields=?, confirmed=?, published=?, version=?, rating=?, updated_at=? WHERE id=? AND version=?",
+                           (values.model_dump_json(), int(confirmed), int(published), version, rating, timestamp, task_id, version - 1))
+        if updated.rowcount != 1:
+            fail(409, "task_changed", "Задача изменена; загрузите актуальную версию")
     return task_row(task_id)
 
 
@@ -206,11 +226,14 @@ def publish(task_id: str, x_demo_identity: str | None = Header(default=None)) ->
     require_owner(row, actor)
     if not row["confirmed"]:
         fail(409, "confirmation_required", "Сначала подтвердите задачу")
-    current = fields(row)
-    rating = calculate_rating(current, confirmed=True)
-    saved = save_task(task_id, current, True, True, row["version"] + 1)
+    timestamp = now()
     with db() as connection:
-        connection.execute("UPDATE tasks SET published_fields=?, published_rating=? WHERE id=?", (current.model_dump_json(), rating.model_dump_json(), task_id))
+        updated = connection.execute(
+            "UPDATE tasks SET published=1, published_fields=fields, published_rating=rating, version=version+1, published_version=version+1, updated_at=?, published_updated_at=? WHERE id=? AND version=? AND confirmed=1",
+            (timestamp, timestamp, task_id, row["version"]),
+        )
+        if updated.rowcount != 1:
+            fail(409, "task_changed", "Задача изменена; загрузите актуальную версию")
     return task_json(task_row(task_id))
 
 

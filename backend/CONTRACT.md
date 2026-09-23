@@ -20,6 +20,8 @@ Task text fields are always present in task responses and default to `""`. The t
 
 Proposal fields `idea`, `plan`, and `duration` are required and must be non-empty. `prototype_url` is optional and defaults to `""`. Milestone `description` is required and must be non-empty. `result_url` and review `comment` are optional and default to `""`. PATCH fields are optional; omitted keys stay unchanged, while explicit empty strings clear fields.
 
+Task text fields reject explicit `null` with HTTP 422 and `validation_error`. Use `""` to clear a value.
+
 ## Task response
 
 All task endpoints return the task object:
@@ -75,7 +77,9 @@ The API returns HTTP status plus this JSON shape, never a successful response wi
 
 ## Published snapshot fields
 
-The task response also contains `published_rating`. It is `null` until the first publication. After publication it stores the rating of the published version. `rating` always describes the current editable version. For a published task with unconfirmed edits, catalog consumers receive the published fields and `published_rating`; the owner receives the current editable fields and `rating`.
+The task response contains `published_rating`, null until publication. Owner views expose the editable fields, rating, confirmation flag, version and timestamp. Catalog and non-owner views expose the complete published snapshot: fields, rating, `confirmed=true`, publication version and timestamp. PATCH and confirm never modify that snapshot. Publish copies confirmed fields and rating atomically. Concurrent changes detected during save/publish return HTTP 409 with `code=task_changed`; reload before retrying.
+
+Existing databases are upgraded at startup. Historical publication timestamps/versions were not previously stored; migration initializes those from the available task metadata. Subsequent publications preserve the exact snapshot.
 
 ```json
 {

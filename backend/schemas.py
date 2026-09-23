@@ -35,18 +35,8 @@ class TaskCreate(TaskFields):
     pass
 
 
-class TaskPatch(BaseModel):
-    title: str | None = None
-    topic: str | None = None
-    context: str | None = None
-    need: str | None = None
-    users: str | None = None
-    data_materials: str | None = None
-    constraints: str | None = None
-    expected_result: str | None = None
-    success_criteria: str | None = None
-    contact: str | None = None
-    consultation: str | None = None
+class TaskPatch(TaskFields):
+    pass
 
 
 class Answer(BaseModel):
