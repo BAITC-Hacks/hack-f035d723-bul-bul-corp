@@ -78,7 +78,7 @@ export function CatalogPage() {
 
   const visibleItems = useMemo(() => {
     const filtered = items.filter((task) => {
-      const matchesTopic = topic === "" || task.topic === topic;
+      const matchesTopic = topic === "" || task.topic.trim().toLocaleLowerCase() === topic.trim().toLocaleLowerCase();
       const matchesLevel = level === "" || task.rating.level === level;
       return matchesTopic && matchesLevel;
     });
@@ -236,5 +236,5 @@ function CatalogLoading() {
 }
 
 function isRatingLevel(value: string): value is RatingLevel {
-  return value in ratingLevelLookup;
+  return Object.hasOwn(ratingLevelLookup, value);
 }

@@ -83,6 +83,7 @@ export interface ProposalCreate {
 export type ProposalStatus = "pending" | "selected" | "rejected";
 
 export interface ProposalResponse extends ProposalCreate {
+  milestone: MilestoneResponse | null;
   id: string;
   task_id: string;
   team_id: string;
@@ -112,3 +113,15 @@ export interface MilestoneResponse extends MilestoneCreate {
 }
 
 export type MilestoneDecision = "confirmed" | "changes_requested";
+
+export interface TeamProposalList extends ProposalListResponse { team_points: number }
+export interface Profile extends DemoIdentity {
+  description: string; industry: string; website: string; contact: string;
+  interests: string[]; skills: string[]; technologies: string[]; portfolio_urls: string[];
+  members: {name: string; role: string}[]; team_points: number;
+}
+export type ProfilePatch = Partial<Pick<Profile, 'name'|'description'|'industry'|'website'|'contact'|'interests'|'skills'|'technologies'|'portfolio_urls'>>;
+export interface Account { id: string; email: string; name: string; profile: Profile }
+export interface Session { user: Account; csrf_token: string; expires_at: number }
+export interface Registration { email: string; password: string; name: string; role: DemoRole; profile_name: string }
+export interface AiResult<T> { data: T; source: 'openai' | 'fallback' | null }

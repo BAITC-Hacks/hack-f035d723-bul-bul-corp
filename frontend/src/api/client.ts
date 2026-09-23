@@ -1,259 +1,53 @@
-import type {
-  Answer,
-  CatalogResponse,
-  DemoIdentity,
-  ErrorResponse,
-  FieldErrors,
-  MilestoneCreate,
-  MilestoneDecision,
-  MilestoneResponse,
-  ProposalCreate,
-  ProposalDecision,
-  ProposalListResponse,
-  ProposalResponse,
-  RatingLevel,
-  TaskFields,
-  TaskResponse,
-  QuestionResponse,
-} from "./types";
-
-const DEFAULT_API_BASE_URL = "http://localhost:8000";
-
-export const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL
-).replace(/\/+$/, "");
-
-interface ApiClientOptions {
-  baseUrl?: string;
-  getIdentityId?: () => string | null;
-  fetchImplementation?: typeof fetch;
-}
-
-interface RequestOptions extends RequestInit {
-  authenticated?: boolean;
-}
-export interface CatalogQuery {
-  topic?: string;
-  level?: RatingLevel;
-}
-
-export interface ApiClient {
-  demoIdentities(): Promise<DemoIdentity[]>;
-  createTask(fields: Partial<TaskFields>): Promise<TaskResponse>;
-  task(taskId: string): Promise<TaskResponse>;
-  updateTask(
-    taskId: string,
-    fields: Partial<TaskFields>,
-  ): Promise<TaskResponse>;
-  questions(taskId: string): Promise<QuestionResponse>;
-  composeTask(taskId: string, answers: Answer[]): Promise<TaskResponse>;
-  confirmTask(taskId: string): Promise<TaskResponse>;
-  publishTask(taskId: string): Promise<TaskResponse>;
-  catalog(query?: CatalogQuery): Promise<CatalogResponse>;
-  businessTasks(): Promise<CatalogResponse>;
-  createProposal(
-    taskId: string,
-    proposal: ProposalCreate,
-  ): Promise<ProposalResponse>;
-  proposals(taskId: string): Promise<ProposalListResponse>;
-  decideProposal(
-    proposalId: string,
-    decision: ProposalDecision,
-  ): Promise<ProposalResponse>;
-  teamProposals(): Promise<ProposalListResponse>;
-  createMilestone(
-    proposalId: string,
-    milestone: MilestoneCreate,
-  ): Promise<MilestoneResponse>;
-  reviewMilestone(
-    milestoneId: string,
-    decision: MilestoneDecision,
-    comment: string,
-  ): Promise<MilestoneResponse>;
-}
-
-
+import type * as T from './types';
+const taskKeys:(keyof T.TaskFields)[]=['title','topic','context','need','users','data_materials','constraints','expected_result','success_criteria','contact','consultation'];
+const taskPayload=(fields:Partial<T.TaskFields>)=>Object.fromEntries(taskKeys.filter(key=>typeof fields[key]==='string').map(key=>[key,fields[key]]));
+export const API_BASE_URL=(import.meta.env.VITE_API_BASE_URL??'').replace(/\/+$/,'');
 export class ApiError extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly fieldErrors: FieldErrors;
-
-  constructor(status: number, payload: ErrorResponse) {
-    super(payload.message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = payload.code;
-    this.fieldErrors = payload.field_errors ?? {};
-  }
+  readonly status:number;readonly code:string;readonly fieldErrors:T.FieldErrors;
+  constructor(status:number,payload:T.ErrorResponse){super(payload.message);this.name='ApiError';this.status=status;this.code=payload.code;this.fieldErrors=payload.field_errors??{};}
 }
-
-export function createApiClient({
-  baseUrl = API_BASE_URL,
-  getIdentityId = () => null,
-  fetchImplementation = fetch,
-}: ApiClientOptions = {}): ApiClient {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
-
-  async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const { authenticated = true, ...requestInit } = options;
-    const headers = new Headers(requestInit.headers);
-    headers.set("Accept", "application/json");
-
-    if (requestInit.body !== undefined && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
+export function createApiClient({getCsrf=()=>'',onUnauthorized=()=>{}}:{getCsrf?:()=>string;onUnauthorized?:()=>void}={}){
+  async function request<R>(path:string,method='GET',body?:unknown,ai=false):Promise<R>{
+    const headers:Record<string,string>={Accept:'application/json'};
+    if(body!==undefined)headers['Content-Type']='application/json';
+    if(method!=='GET'&&getCsrf())headers['X-CSRF-Token']=getCsrf();
+    let response:Response;
+    try{response=await fetch(API_BASE_URL+path,{method,headers,credentials:'include',body:body===undefined?undefined:JSON.stringify(body)});}
+    catch{throw new ApiError(0,{code:'network_error',message:'Нет связи с сервером. Проверьте подключение и повторите.'});}
+    let data:unknown;
+    try{data=response.status===204?undefined:await response.json();}catch{throw new ApiError(response.status,{code:'invalid_response',message:'Сервер вернул непонятный ответ. Повторите позже.'});}
+    if(!response.ok){
+      if(response.status===401&&!['/api/auth/login','/api/auth/register','/api/auth/password'].includes(path))onUnauthorized();
+      throw new ApiError(response.status,data as T.ErrorResponse);
     }
-
-    if (authenticated) {
-      const identityId = getIdentityId();
-      if (!identityId) {
-        throw new ApiError(401, {
-          code: "invalid_identity",
-          message: "Выберите демопользователя",
-        });
-      }
-      headers.set("X-Demo-Identity", identityId);
-    }
-
-    const response = await fetchImplementation(`${normalizedBaseUrl}${path}`, {
-      ...requestInit,
-      headers,
-    });
-    const payload = await readJson(response);
-
-    if (!response.ok) {
-      throw new ApiError(response.status, toErrorResponse(payload));
-    }
-
-    return payload as T;
+    const source=response.headers.get('X-AI-Source');
+    return(ai?{data,source:source==='openai'||source==='fallback'?source:null}:data)as R;
   }
-
+  const id=encodeURIComponent;
   return {
-    demoIdentities: () =>
-      request<DemoIdentity[]>("/api/demo-identities", { authenticated: false }),
-
-    createTask: (fields: Partial<TaskFields>) =>
-      request<TaskResponse>("/api/tasks", {
-        method: "POST",
-        body: JSON.stringify(fields),
-      }),
-
-    task: (taskId: string) =>
-      request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}`),
-
-    updateTask: (taskId: string, fields: Partial<TaskFields>) =>
-      request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}`, {
-        method: "PATCH",
-        body: JSON.stringify(fields),
-      }),
-
-    questions: (taskId: string) =>
-      request<QuestionResponse>(
-        `/api/tasks/${encodeURIComponent(taskId)}/questions`,
-        { method: "POST" },
-      ),
-
-    composeTask: (taskId: string, answers: Answer[]) =>
-      request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}/compose`, {
-        method: "POST",
-        body: JSON.stringify({ answers }),
-      }),
-
-    confirmTask: (taskId: string) =>
-      request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}/confirm`, {
-        method: "POST",
-      }),
-
-    publishTask: (taskId: string) =>
-      request<TaskResponse>(`/api/tasks/${encodeURIComponent(taskId)}/publish`, {
-        method: "POST",
-      }),
-
-    catalog: ({ topic, level }: CatalogQuery = {}) => {
-      const query = new URLSearchParams();
-      if (topic) query.set("topic", topic);
-      if (level) query.set("level", level);
-      const suffix = query.size > 0 ? `?${query.toString()}` : "";
-      return request<CatalogResponse>(`/api/tasks${suffix}`);
-    },
-
-    businessTasks: () => request<CatalogResponse>("/api/business/tasks"),
-
-    createProposal: (taskId: string, proposal: ProposalCreate) =>
-      request<ProposalResponse>(`/api/tasks/${encodeURIComponent(taskId)}/proposals`, {
-        method: "POST",
-        body: JSON.stringify(proposal),
-      }),
-
-    proposals: (taskId: string) =>
-      request<ProposalListResponse>(
-        `/api/tasks/${encodeURIComponent(taskId)}/proposals`,
-      ),
-
-    decideProposal: (proposalId: string, decision: ProposalDecision) =>
-      request<ProposalResponse>(
-        `/api/proposals/${encodeURIComponent(proposalId)}/decision`,
-        {
-          method: "POST",
-          body: JSON.stringify({ decision }),
-        },
-      ),
-
-    teamProposals: () =>
-      request<ProposalListResponse>("/api/team/proposals"),
-
-    createMilestone: (proposalId: string, milestone: MilestoneCreate) =>
-      request<MilestoneResponse>(
-        `/api/proposals/${encodeURIComponent(proposalId)}/milestone`,
-        {
-          method: "POST",
-          body: JSON.stringify(milestone),
-        },
-      ),
-
-    reviewMilestone: (
-      milestoneId: string,
-      decision: MilestoneDecision,
-      comment: string,
-    ) =>
-      request<MilestoneResponse>(
-        `/api/milestones/${encodeURIComponent(milestoneId)}/review`,
-        {
-          method: "POST",
-          body: JSON.stringify({ decision, comment }),
-        },
-      ),
+    session:()=>request<T.Session>('/api/auth/session'),
+    register:(body:T.Registration)=>request<T.Session>('/api/auth/register','POST',body),
+    login:(body:{email:string;password:string})=>request<T.Session>('/api/auth/login','POST',body),
+    logout:()=>request<void>('/api/auth/logout','POST'),
+    changePassword:(body:{current_password:string;new_password:string})=>request<void>('/api/auth/password','POST',body),
+    updateUser:(name:string)=>request<T.Account>('/api/users/me','PATCH',{name}),
+    profile:(profileId:string)=>request<T.Profile>('/api/profiles/'+id(profileId)),
+    updateProfile:(fields:T.ProfilePatch)=>request<T.Profile>('/api/profiles/me','PATCH',fields),
+    createTask:(fields:Partial<T.TaskFields>)=>request<T.TaskResponse>('/api/tasks','POST',taskPayload(fields)),
+    task:(taskId:string)=>request<T.TaskResponse>('/api/tasks/'+id(taskId)),
+    updateTask:(taskId:string,fields:Partial<T.TaskFields>)=>request<T.TaskResponse>('/api/tasks/'+id(taskId),'PATCH',taskPayload(fields)),
+    questions:(taskId:string)=>request<T.AiResult<T.QuestionResponse>>('/api/tasks/'+id(taskId)+'/questions','POST',undefined,true),
+    composeTask:(taskId:string,answers:T.Answer[])=>request<T.AiResult<T.TaskResponse>>('/api/tasks/'+id(taskId)+'/compose','POST',{answers},true),
+    confirmTask:(taskId:string)=>request<T.TaskResponse>('/api/tasks/'+id(taskId)+'/confirm','POST'),
+    publishTask:(taskId:string)=>request<T.TaskResponse>('/api/tasks/'+id(taskId)+'/publish','POST'),
+    catalog:(query:{topic?:string;level?:T.RatingLevel}={})=>request<T.CatalogResponse>('/api/tasks?'+new URLSearchParams(query)),
+    businessTasks:()=>request<T.CatalogResponse>('/api/business/tasks'),
+    createProposal:(taskId:string,body:T.ProposalCreate)=>request<T.ProposalResponse>('/api/tasks/'+id(taskId)+'/proposals','POST',body),
+    proposals:(taskId:string)=>request<T.ProposalListResponse>('/api/tasks/'+id(taskId)+'/proposals'),
+    decideProposal:(proposalId:string,decision:T.ProposalDecision)=>request<T.ProposalResponse>('/api/proposals/'+id(proposalId)+'/decision','POST',{decision}),
+    teamProposals:()=>request<T.TeamProposalList>('/api/team/proposals'),
+    createMilestone:(proposalId:string,body:T.MilestoneCreate)=>request<T.MilestoneResponse>('/api/proposals/'+id(proposalId)+'/milestone','POST',body),
+    reviewMilestone:(milestoneId:string,decision:T.MilestoneDecision,comment:string)=>request<T.MilestoneResponse>('/api/milestones/'+id(milestoneId)+'/review','POST',{decision,comment}),
   };
 }
-
-
-async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) return undefined;
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new ApiError(response.status, {
-      code: "invalid_response",
-      message: "Backend вернул некорректный JSON",
-    });
-  }
-}
-
-function toErrorResponse(payload: unknown): ErrorResponse {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "code" in payload &&
-    "message" in payload &&
-    typeof payload.code === "string" &&
-    typeof payload.message === "string"
-  ) {
-    return payload as ErrorResponse;
-  }
-
-  return {
-    code: "request_failed",
-    message: "Не удалось выполнить запрос. Повторите попытку.",
-  };
-}
+export type ApiClient=ReturnType<typeof createApiClient>;

@@ -1,139 +1,31 @@
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
-import { CatalogPage } from "../features/catalog/CatalogPage";
-import { TaskDetailsPage } from "../features/catalog/TaskDetailsPage";
-import { useDemoSession } from "./DemoSession";
-
-const navigation = [
-  { to: "/catalog", label: "Каталог" },
-  { to: "/constructor", label: "Конструктор" },
-  { to: "/business", label: "Кабинет бизнеса" },
-  { to: "/team", label: "Кабинет команды" },
-] as const;
-
-const routeContent = {
-  catalog: {
-    title: "Каталог",
-    description: "Опубликованные задачи и предложения команд.",
-  },
-  constructor: {
-    title: "Конструктор",
-    description: "Описание, уточнения, подтверждение и публикация задачи.",
-  },
-  business: {
-    title: "Кабинет бизнеса",
-    description: "Черновики, опубликованные задачи и решения по предложениям.",
-  },
-  team: {
-    title: "Кабинет команды",
-    description: "Предложения, выбранные задачи и результаты этапа.",
-  },
-} as const;
-
-export function App() {
-  return (
-    <div className="app-shell">
-      <Header />
-      <main className="main-content" id="main-content">
-        <Routes>
-          <Route path="/" element={<Navigate to="/catalog" replace />} />
-          <Route path="/catalog" element={<CatalogPage />} />
-          <Route path="/catalog/:taskId" element={<TaskDetailsPage />} />
-          <Route path="/constructor" element={<SectionPage section="constructor" />} />
-          <Route path="/business" element={<SectionPage section="business" />} />
-          <Route path="/team" element={<SectionPage section="team" />} />
-          <Route path="*" element={<Navigate to="/catalog" replace />} />
-        </Routes>
-      </main>
-    </div>
-  );
-}
-
-function Header() {
-  const {
-    identities,
-    selectedIdentity,
-    state,
-    error,
-    selectIdentity,
-    reload,
-  } = useDemoSession();
-
-  return (
-    <header className="site-header">
-      <a className="skip-link" href="#main-content">
-        Перейти к содержимому
-      </a>
-      <div className="header-primary">
-        <NavLink className="brand" to="/catalog" aria-label="AI Sana, каталог">
-          <span className="brand-mark" aria-hidden="true">
-            AI
-          </span>
-          <span className="brand-name">Sana</span>
-          <span className="demo-flag">Деморежим</span>
-        </NavLink>
-
-        <div className="identity-panel" aria-live="polite">
-          <label htmlFor="demo-identity">Демо-пользователь</label>
-          {state === "error" ? (
-            <div className="identity-error" role="alert">
-              <span>{error}</span>
-              <button type="button" onClick={reload}>
-                Повторить
-              </button>
-            </div>
-          ) : (
-            <div className="identity-controls">
-              <select
-                id="demo-identity"
-                value={selectedIdentity?.id ?? ""}
-                onChange={(event) => selectIdentity(event.target.value)}
-                disabled={state === "loading" || identities.length === 0}
-              >
-                {state === "loading" && <option value="">Загрузка…</option>}
-                {state === "ready" && identities.length === 0 && (
-                  <option value="">Нет демопользователей</option>
-                )}
-                {identities.map((identity) => (
-                  <option key={identity.id} value={identity.id}>
-                    {identity.name}
-                  </option>
-                ))}
-              </select>
-              {selectedIdentity && (
-                <span className={`role-badge role-badge--${selectedIdentity.role}`}>
-                  {selectedIdentity.role === "business" ? "Бизнес" : "Команда"}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <nav className="main-nav" aria-label="Основная навигация">
-        {navigation.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) => (isActive ? "active" : undefined)}
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
-    </header>
-  );
-}
-
-function SectionPage({ section }: { section: keyof typeof routeContent }) {
-  const content = routeContent[section];
-
-  return (
-    <section className="section-page" aria-labelledby={`${section}-title`}>
-      <div className="section-heading">
-        <h1 id={`${section}-title`}>{content.title}</h1>
-        <p>{content.description}</p>
-      </div>
-      <div className="section-rule" aria-hidden="true" />
-    </section>
-  );
+import {useEffect,type ReactNode} from 'react';
+import {Link,Navigate,NavLink,Route,Routes,useLocation} from 'react-router-dom';
+import {CatalogPage} from '../features/catalog/CatalogPage';
+import {TaskDetailsPage} from '../features/catalog/TaskDetailsPage';
+import {AuthPage} from '../features/AuthPage';
+import {ConstructorPage} from '../features/ConstructorPage';
+import {BusinessPage,TeamPage} from '../features/Dashboards';
+import {ProfilePage} from '../features/ProfilePage';
+import {useDemoSession} from './DemoSession';
+import {ErrorNote,Loading,useAction} from './ui';
+function Icon({kind}:{kind:string}){return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">{kind==='catalog'?<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>:kind==='profile'?<><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></>:kind==='new'?<path d="M12 4v16M4 12h16"/>:<><rect x="3" y="6" width="18" height="15" rx="2"/><path d="M8 6V3h8v3M3 12h18M10 12v3h4v-3"/></>}</svg>;}
+function Guard({children,role}:{children:ReactNode;role?:'business'|'team'}){const {state,selectedIdentity,error,reload}=useDemoSession();if(state==='loading')return <Loading/>;if(state==='error')return <div className="empty"><h1>Не удалось подключиться</h1><ErrorNote text={error}/><button onClick={()=>void reload()}>Повторить</button></div>;if(!selectedIdentity)return <Navigate to="/login" replace/>;if(role&&selectedIdentity.role!==role)return <div className="empty"><h1>Этот раздел доступен {role==='business'?'бизнесу':'команде'}</h1><Link to="/catalog">Вернуться в каталог</Link></div>;return children;}
+export function App(){const s=useDemoSession();const a=useAction();const location=useLocation();const authPage=['/login','/register'].includes(location.pathname);
+ useEffect(()=>{window.scrollTo(0,0);document.getElementById('main-content')?.focus();},[location.pathname]);
+ return <div className={authPage?'app auth-shell':'app'}><a className="skip-link" href="#main-content">Перейти к содержимому</a>
+ <aside className="sidebar"><Link className="brand" to="/catalog"><span className="brand-mark">q.</span><span>Qadam</span></Link><nav aria-label="Основная навигация">
+ <NavLink to="/catalog"><Icon kind="catalog"/>Каталог задач</NavLink>
+ {s.selectedIdentity?.role==='business'&&<><NavLink to="/business"><Icon kind="work"/>Мои задачи</NavLink><NavLink to="/constructor"><Icon kind="new"/>Создать задачу</NavLink></>}
+ {s.selectedIdentity?.role==='team'&&<NavLink to="/team"><Icon kind="work"/>Моя работа</NavLink>}
+ {s.user&&<NavLink to="/profile"><Icon kind="profile"/>Мой профиль</NavLink>}
+ </nav><div className="sidebar-bottom"><p>От задачи<br/>к результату.</p><span>Кейс AI Sana · HackAlem</span></div></aside>
+ <div className="workspace"><header className="topbar"><span>{s.selectedIdentity?(s.selectedIdentity.role==='business'?'Пространство бизнеса':'Пространство команды'):'Практические проекты'}</span><div className="account-menu">{s.user?<><Link to="/profile"><span className="avatar">{s.user.name.slice(0,1)}</span><span>{s.user.profile.name}</span></Link><button className="text-button" disabled={a.busy} onClick={()=>void a.run(s.logout)}>Выйти</button></>:<Link to={location.pathname==='/login'?'/register':'/login'}>{location.pathname==='/login'?'Создать аккаунт':'Войти'}</Link>}</div></header>
+ <main id="main-content" tabIndex={-1} className="main-content"><ErrorNote text={a.error}/><Routes>
+ <Route path="/" element={<Navigate to="/catalog" replace/>}/><Route path="/login" element={<AuthPage key="login"/>}/><Route path="/register" element={<AuthPage register key="register"/>}/>
+ <Route path="/catalog" element={<Guard><CatalogPage/></Guard>}/><Route path="/catalog/:taskId" element={<Guard><TaskDetailsPage/></Guard>}/>
+ <Route path="/constructor" element={<Guard role="business"><ConstructorPage key={location.search+s.user?.id}/></Guard>}/>
+ <Route path="/business" element={<Guard role="business"><BusinessPage/></Guard>}/><Route path="/team" element={<Guard role="team"><TeamPage/></Guard>}/>
+ <Route path="/profile" element={<Guard><ProfilePage key={s.user?.id}/></Guard>}/><Route path="/profiles/:profileId" element={<Guard><ProfilePage key={location.pathname}/></Guard>}/>
+ <Route path="*" element={<div className="empty"><h1>Страница не найдена</h1><Link to="/catalog">Открыть каталог</Link></div>}/>
+ </Routes></main><footer className="footer"><span>Qadam</span><span>Решения выбирают люди.</span></footer></div></div>;
 }

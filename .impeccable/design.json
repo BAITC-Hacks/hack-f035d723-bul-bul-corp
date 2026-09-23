@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-23T12:29:29Z",
+  "title": "Design System: Qadam",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Action blue"
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Pale canvas"
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "White surface"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Graphite"
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Secondary ink"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Authentication introduction; 38px at narrower widths."
+      },
+      "headline": {
+        "displayName": "Page heading",
+        "purpose": "Main page title; 34px on mobile."
+      },
+      "body": {
+        "displayName": "Reading text",
+        "purpose": "Supporting descriptions; contextual sizes range from 13px to 15px."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "interaction",
+        "value": "background-color .16s ease, color .16s ease, border-color .16s ease",
+        "purpose": "Links and buttons."
+      },
+      {
+        "name": "loading",
+        "value": "1.3s ease-in-out infinite alternate; opacity .55 to 1",
+        "purpose": "Loading status; skeletons use 1s. Disabled under prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "wide-min",
+        "value": "1600px"
+      },
+      {
+        "name": "compact-max",
+        "value": "1150px"
+      },
+      {
+        "name": "mobile-max",
+        "value": "800px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary action with visible keyboard focus and disabled state.",
+      "html": "<button class=\"ds-primary\">Сохранить</button>",
+      "css": ".ds-primary{font-family:'Manrope Variable',sans-serif;font-size:13px;font-weight:650;line-height:1.5;background:var(--accent);color:white;border:1px solid var(--accent);border-radius:8px;padding:11px 17px;min-height:44px;cursor:pointer;transition:background-color .16s ease,color .16s ease,border-color .16s ease}.ds-primary:hover:not(:disabled){background:var(--accent-strong);border-color:var(--accent-strong)}.ds-primary:focus-visible{outline:3px solid #6c91f7;outline-offset:3px}.ds-primary:disabled{opacity:.48;cursor:not-allowed}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "Text field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Persistent Russian label and readable placeholder.",
+      "html": "<label class=\"ds-field\"><span>Название</span><input placeholder=\"Маршрутизация обращений клиентов\" /></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:9px;font:600 13px 'Manrope Variable',sans-serif;color:var(--ink)}.ds-field input{font:450 14px/1.55 'Manrope Variable',sans-serif;width:100%;border:1px solid #ccd3e0;border-radius:7px;min-height:45px;padding:11px 12px;background:white;color:var(--ink);caret-color:var(--accent)}.ds-field input::placeholder{color:var(--muted);opacity:1}.ds-field input:hover{border-color:#95a7c6}.ds-field input:focus-visible{outline:3px solid #6c91f7;outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Light, strict: white, graphite, blue accent, large headings",
+    "overview": "The user-confirmed direction is recorded from the implementation, without an approved comp or a new visual metaphor. Russian task content uses readable rows, visible labels, restrained borders, and flat white panels.",
+    "keyCharacteristics": [
+      "Self-hosted Manrope",
+      "Large headings",
+      "Row catalogue",
+      "Flat bordered panels",
+      "Desktop sidebar becomes mobile top navigation"
+    ],
+    "rules": [],
+    "dos": [
+      "Do reuse the existing palette and typography.",
+      "Do retain visible labels and focus states.",
+      "Do distinguish loading, empty, error, and success states."
+    ],
+    "donts": [
+      "Don't add decorative shadows.",
+      "Don't treat task readiness as company reputation.",
+      "Don't leave loading indicators visible after request failure."
+    ]
+  }
+}

@@ -139,6 +139,7 @@ export function TaskDetailsPage() {
         </div>
       </header>
 
+      {selectedIdentity?.role === "team" && <p><a className="button primary" href="#proposal">Предложить решение</a></p>}
       <div className="task-details__layout">
         <section className="task-fields" aria-labelledby="task-fields-title">
           <h2 id="task-fields-title">Подтверждённая карточка</h2>
@@ -184,7 +185,7 @@ export function TaskDetailsPage() {
           )}
         </aside>
       </div>
-      <ProposalPanel taskId={task.id} />
+      <ProposalPanel key={selectedIdentity?.id+task.id} taskId={task.id} />
     </article>
   );
 }
