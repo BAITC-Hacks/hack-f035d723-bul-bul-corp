@@ -61,6 +61,35 @@ DELIVERY_TARGET = re.compile(
     rf"(?:до|к|by)\s+{CALENDAR_DATE})",
     re.IGNORECASE,
 )
+
+# Match the structure of a measurable goal, not a closed list of industries.
+# The metric must be named, the target must have a unit, and the relation must
+# express a change or an explicit bound. Dates/versions are not metric names.
+METRIC_NAME = r"(?P<metric>[a-zа-яё]+(?:[- ][a-zа-яё]+){0,7})"
+BUSINESS_UNIT = (
+    rf"(?:{PERCENT}|{DURATION}|{CURRENCY}|"
+    r"(?:процент(?:а|ов)?|percent|percentage points?|"
+    r"кг|килограмм(?:а|ов)?|тонн(?:а|ы|у)?|литр(?:а|ов)?|"
+    r"квт[⋅·-]?ч|kwh|kg|kilograms?|tonnes?|liters?)\b)"
+)
+MEASURED_VALUE = rf"{NUMBER}\s*{BUSINESS_UNIT}"
+CHANGE_TARGET = re.compile(
+    rf"\b(?:снизить|сократить|уменьшить|увеличить|повысить|"
+    rf"reduce|decrease|increase|improve|cut|raise)\s+{METRIC_NAME}\s+"
+    rf"(?:на|до|by|to)\s+{MEASURED_VALUE}",
+    re.IGNORECASE,
+)
+LIMIT_TARGET = re.compile(
+    rf"\b{METRIC_NAME}\s*:?\s*(?:не более|не менее|не выше|не ниже|"
+    rf"at most|at least|no more than|no less than|>=|<=|≥|≤)\s*{MEASURED_VALUE}",
+    re.IGNORECASE,
+)
+NON_METRIC_NAME = re.compile(
+    r"\b(?:верси\w*|дат[ауы]|номер\w*|идентификатор\w*|"
+    r"version\w*|date|identifier\w*)\b|"
+    r"^(?:kpi|метрика|показатель|metric|что-то|нечто)$",
+    re.IGNORECASE,
+)
 CONTACT_CHANNEL = re.compile(
     r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b|"
     r"(?<!\w)@[a-z0-9_]+\b|"
@@ -119,6 +148,10 @@ def _known_content(value: str) -> str:
 
 
 def _measurement_reason(value: str) -> str | None:
+    for pattern in (CHANGE_TARGET, LIMIT_TARGET):
+        for match in pattern.finditer(value):
+            if not NON_METRIC_NAME.search(match["metric"]):
+                return f"Указаны показатель, изменение или граница и числовая цель с единицей: «{match.group(0)}»"
     for pattern, reason in (
         (METRIC_TARGET, "Указаны метрика, числовая цель и единица измерения"),
         (COUNT_TARGET, "Указано числовое количество заявок, пользователей или других поддерживаемых объектов"),

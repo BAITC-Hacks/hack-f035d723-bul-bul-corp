@@ -57,6 +57,38 @@ class RatingTest(unittest.TestCase):
                 category = next(c for c in rating.categories if c.key == "success_criteria")
                 self.assertNotIn(category.label, rating.missing)
 
+    def test_business_goals_use_named_metrics_not_an_industry_dictionary(self):
+        for criterion in (
+            "Снизить дефицит на 20%",
+            "Сократить отток сотрудников на 12,5 процента",
+            "Увеличить урожайность на 15%",
+            "Повысить загрузку оборудования до 80%",
+            "Уменьшить массу отходов на 500 кг",
+            "Сократить потребление воды на 100 литров",
+            "Снизить энергопотребление на 200 кВт·ч",
+            "Сократить время ожидания на 5 минут",
+            "Доля возвратов не более 2%",
+            "Выход годной продукции ≥ 95%",
+            "Reduce absenteeism by 20%",
+            "Increase recycling yield to 85%",
+            "Water consumption at most 100 liters",
+        ):
+            with self.subTest(criterion=criterion):
+                self.assertEqual(self.score(success_criteria=criterion).total, 15)
+
+    def test_business_goals_reject_missing_structure_dates_and_versions(self):
+        for criterion in (
+            "Снизить дефицит", "Снизить дефицит на 20", "Дефицит 20",
+            "Снизить на 20%", "Снизить дефицит на 2026-06-01",
+            "Снизить дефицит на 01.06.2026%", "Снизить дефицит на v2.0",
+            "Снизить дефицит на 2.0.1%", "Снизить версию на 20%",
+            "Версия программы не менее 20%", "KPI не менее 20%",
+            "Дата релиза не ниже 20%", "Повысить показатель на 20%",
+            "Снизить дефицит на 20%abc", "Уменьшить массу отходов на 500 кгм",
+        ):
+            with self.subTest(criterion=criterion):
+                self.assertEqual(self.score(success_criteria=criterion).total, 0)
+
     def test_measurement_rejects_identifiers_and_unmeasured_numbers(self):
         criteria = (
             "", " \t\n", "Улучшить качество", "kpi 1", "KPI 1%",
