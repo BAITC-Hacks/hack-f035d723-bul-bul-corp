@@ -72,3 +72,51 @@ The API returns HTTP status plus this JSON shape, never a successful response wi
 ```
 
 `field_errors` is omitted when no field-level details exist. Typical codes: `invalid_identity` (401), `not_owner` (403), `business_required` (403), `team_required` (403), `private_task` (403), `task_not_found` (404), `proposal_not_found` (404), `milestone_not_found` (404), `confirmation_required` (409), `task_not_published` (409), and `proposal_not_selected` (409).
+
+## Published snapshot fields
+
+The task response also contains `published_rating`. It is `null` until the first publication. After publication it stores the rating of the published version. `rating` always describes the current editable version. For a published task with unconfirmed edits, catalog consumers receive the published fields and `published_rating`; the owner receives the current editable fields and `rating`.
+
+```json
+{
+  "rating": {
+    "total": 0,
+    "level": "draft",
+    "categories": [
+      {
+        "key": "context_need",
+        "label": "Контекст и потребность",
+        "points": 0,
+        "max_points": 20,
+        "basis": ["Заполнено полей: 0 из 2"]
+      }
+    ],
+    "missing": ["Контекст и потребность"]
+  },
+  "published_rating": null
+}
+```
+
+## Non-task response bodies
+
+`POST /questions` returns `{ "questions": ["...", "...", "..."] }`.
+
+`POST /proposals` and `POST /decision` return:
+
+```json
+{
+  "id": "uuid", "task_id": "uuid", "team_id": "team-alpha",
+  "idea": "...", "plan": "...", "duration": "...",
+  "prototype_url": "", "status": "pending", "created_at": "ISO-8601"
+}
+```
+
+`POST /milestone` and `POST /review` return:
+
+```json
+{
+  "id": "uuid", "proposal_id": "uuid", "description": "...",
+  "result_url": "", "status": "submitted", "comment": "",
+  "points_awarded": 0
+}
+```
