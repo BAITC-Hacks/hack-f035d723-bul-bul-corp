@@ -116,9 +116,34 @@ class RatingTest(unittest.TestCase):
         self.assertEqual(rating.total, 0)
         self.assertEqual(set(rating.missing), {category.label for category in rating.categories})
 
-    def test_simple_field_scores_do_not_depend_on_length(self):
-        self.assertEqual(self.score(context="x").total, 10)
-        self.assertEqual(self.score(context="x" * 10000).total, 10)
+    def test_uncertainty_does_not_score_regardless_of_wording_or_length(self):
+        for unknown in (
+            "Не знаю", "Пока неизвестно", "Ещё не определено",
+            "Информация пока отсутствует", "Требуется уточнение",
+            "Уточним позже", "Не могу сказать", "TBD", "Not yet",
+            "To be determined", "I don't know", "???",
+            "Мы пока не знаем, какие именно сведения нужно предоставить, и не можем сказать ничего определённого.",
+        ):
+            with self.subTest(unknown=unknown):
+                rating = self.score(**{field: unknown for field in self.FIELD_VALUES})
+                self.assertEqual(rating.total, 0)
+                self.assertEqual(set(rating.missing), {c.label for c in rating.categories})
+
+    def test_uncertain_metric_contact_and_consultation_do_not_score(self):
+        rating = self.score(
+            success_criteria="Не согласовано, нужна ли точность 90%",
+            contact="Не знаю, работает ли owner@example.com",
+            consultation="Пока неизвестно, возможен ли еженедельный созвон",
+        )
+        self.assertEqual(rating.total, 0)
+
+    def test_known_facts_survive_separate_uncertain_clauses(self):
+        self.assertEqual(self.score(users="Бухгалтеры").total, 10)
+        self.assertEqual(self.score(data_materials="Данных нет").total, 20)
+        self.assertEqual(self.score(constraints="Ограничений нет").total, 10)
+        fields = TaskFields(**{field: "Пока неизвестно.\n" + fact for field, fact in self.FIELD_VALUES.items()})
+        self.assertEqual(calculate_rating(fields).total, 0)
+        self.assertEqual(calculate_rating(fields, confirmed=True).total, 100)
 
     def test_level_boundaries_for_every_reachable_total(self):
         fields_by_total = {}

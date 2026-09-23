@@ -69,6 +69,33 @@ class TaskLifecycleTest(unittest.TestCase):
                 client.post(url+'/publish',headers=owner)
                 self.assertEqual(client.get(url,headers=team).json()['title'],result.json()['title'])
 
+    def test_unknown_card_gains_points_only_after_facts_and_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(main, 'DB_PATH', Path(directory) / 'tasks.sqlite3'):
+            with TestClient(main.app) as client:
+                owner = {'X-Demo-Identity': 'business-demo'}
+                draft = client.post('/api/tasks', headers=owner, json={
+                    name: 'Пока неизвестно, требуется уточнение' for name in TaskFields.model_fields
+                }).json()
+                url = '/api/tasks/' + draft['id']
+                confirmed = client.post(url+'/confirm', headers=owner).json()
+                self.assertTrue(confirmed['confirmed'])
+                self.assertEqual(confirmed['rating']['total'], 0)
+                self.assertEqual(len(confirmed['rating']['missing']), 7)
+                edited = client.patch(url, headers=owner, json={
+                    'context': 'Обращения теряются при ручной передаче между отделами',
+                    'need': 'Автоматически направлять обращения ответственному отделу',
+                    'users': 'Операторы поддержки',
+                }).json()
+                self.assertFalse(edited['confirmed'])
+                self.assertEqual(edited['rating']['total'], 0)
+                confirmed = client.post(url+'/confirm', headers=owner).json()
+                self.assertEqual(confirmed['rating']['total'], 30)
+                self.assertEqual(
+                    {c['key']: c['points'] for c in confirmed['rating']['categories'] if c['points']},
+                    {'context_need': 20, 'users': 10},
+                )
+
 
 if __name__ == '__main__':
     unittest.main()

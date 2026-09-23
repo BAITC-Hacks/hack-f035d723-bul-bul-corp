@@ -5,7 +5,7 @@ import re
 from .schemas import Rating, RatingCategory, TaskFields
 
 
-# Simple fields score for non-whitespace text, not length or inferred quality.
+# Explicit uncertainty is not content; length is not a quality signal.
 # Compound weights are explicit: context/need 10 each, contact/consultation 5 each.
 RULES = (
     ("context_need", "Контекст и потребность", (("context", 10), ("need", 10))),
@@ -88,6 +88,35 @@ CONSULTATION_UNAVAILABLE = re.compile(
     re.IGNORECASE,
 )
 
+# Conservative, deterministic recognition of explicit uncertainty, not a claim
+# to validate arbitrary natural language or the truth of supplied facts.
+UNCERTAINTY = re.compile(
+    r"\b(?:не (?:знаю|знаем|известно|определ\w*|уточн\w*|решен\w*|"
+    r"согласован\w*|выбран\w*|ясно|могу сказать|можем сказать)|"
+    r"неизвест\w*|неопредел\w*|"
+    r"(?:пока|еще) нет (?:информации|сведений|понимания)|"
+    r"(?:информаци\w*|сведени\w*|понимани\w*) (?:пока )?нет|"
+    r"(?:информаци\w*|сведени\w*) (?:пока )?отсутств\w*|"
+    r"(?:требу\w*|нуж\w*|ожида\w*|ждем) (?:уточнен\w*|согласован\w*|ответ\w*)|"
+    r"(?:уточн\w*|определ\w*|реш\w*|выбер\w*) (?:позже|потом)|"
+    r"(?:позже|потом) (?:уточн\w*|определ\w*|реш\w*|выбер\w*)|"
+    r"unknown|unsure|undecided|tbd|tbc|n/a|"
+    r"not (?:yet|known|sure|decided|defined|determined|agreed)|"
+    r"(?:do not|don't) know|to be (?:determined|confirmed|defined)|"
+    r"pending (?:clarification|confirmation)|no information)\b",
+    re.IGNORECASE,
+)
+STATEMENT_BOUNDARY = re.compile(r"\n+|[;!?]+|(?<=\.)\s+")
+
+
+def _known_content(value: str) -> str:
+    statements = STATEMENT_BOUNDARY.split(value)
+    return " ".join(
+        statement.strip() for statement in statements
+        if re.search(r"\w", statement)
+        and not UNCERTAINTY.search(statement.casefold().replace("ё", "е"))
+    )
+
 
 def _measurement_reason(value: str) -> str | None:
     for pattern, reason in (
@@ -105,6 +134,9 @@ def _field_reason(field_name: str, value: str) -> tuple[bool, str]:
     label = FIELD_LABELS[field_name]
     if not value:
         return False, f"{label}: поле пустое"
+    value = _known_content(value)
+    if not value:
+        return False, f"{label}: сведения неизвестны или требуют уточнения; содержательные сведения не указаны"
     if field_name == "success_criteria":
         reason = _measurement_reason(value)
         return bool(reason), reason or (
@@ -124,7 +156,7 @@ def _field_reason(field_name: str, value: str) -> tuple[bool, str]:
         ):
             return True, "Консультации: указаны вид обратной связи и канал, периодичность или доступность"
         return False, "Консультации: нужны вид обратной связи и канал, периодичность или доступность без явного отказа"
-    return True, f"{label}: поле заполнено"
+    return True, f"{label}: указаны сведения без явной неопределённости"
 
 
 def calculate_rating(fields: TaskFields, confirmed: bool = False) -> Rating:
@@ -136,7 +168,7 @@ def calculate_rating(fields: TaskFields, confirmed: bool = False) -> Rating:
         points = 0
         basis: list[str] = []
         for field_name, weight in field_rules:
-            value = " ".join(getattr(fields, field_name).split())
+            value = getattr(fields, field_name).strip()
             accepted, reason = _field_reason(field_name, value)
             if accepted:
                 points += weight
