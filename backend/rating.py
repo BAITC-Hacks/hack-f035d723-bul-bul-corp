@@ -163,8 +163,10 @@ def _measurement_reason(value: str) -> str | None:
     return None
 
 
-def _field_reason(field_name: str, value: str) -> tuple[bool, str]:
-    label = FIELD_LABELS[field_name]
+def field_readiness(field_name: str, value: str) -> tuple[bool, str]:
+    """Shared eligibility for rating and questions, independent of confirmation."""
+    label = FIELD_LABELS.get(field_name, field_name)
+    value = value.strip()
     if not value:
         return False, f"{label}: поле пустое"
     value = _known_content(value)
@@ -201,8 +203,7 @@ def calculate_rating(fields: TaskFields, confirmed: bool = False) -> Rating:
         points = 0
         basis: list[str] = []
         for field_name, weight in field_rules:
-            value = getattr(fields, field_name).strip()
-            accepted, reason = _field_reason(field_name, value)
+            accepted, reason = field_readiness(field_name, getattr(fields, field_name))
             if accepted:
                 points += weight
             awarded = weight if accepted and confirmed else 0

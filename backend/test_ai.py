@@ -26,6 +26,15 @@ def completion(content, *, finish_reason="stop", refusal=None):
 
 
 class AiTest(unittest.TestCase):
+    KNOWN_FIELDS = {
+        "title": "Маршрутизация обращений", "topic": "Поддержка",
+        "context": "Обращения передаются вручную", "need": "Ускорить маршрутизацию",
+        "users": "Операторы", "data_materials": "Синтетические обращения в CSV",
+        "constraints": "Без передачи персональных данных",
+        "expected_result": "Прототип маршрутизации", "success_criteria": "Точность 90%",
+        "contact": "demo@example.com", "consultation": "Еженедельный созвон",
+    }
+
     def setUp(self):
         self.env = patch.dict(os.environ, {
             "AI_API_KEY": "", "OPENAI_API_KEY": "", "AI_TIMEOUT_SECONDS": "15",
@@ -59,7 +68,7 @@ class AiTest(unittest.TestCase):
         self.assertTrue(all(client.is_closed() for client in clients))
 
     def test_only_missing_constraints_get_relevant_distinct_questions(self):
-        fields = TaskFields(**{name: "Already supplied" for name in ai.FIELDS if name != "constraints"})
+        fields = TaskFields(**{**self.KNOWN_FIELDS, "constraints": ""})
         result = ai.questions(fields)
         self.assertEqual(len(result), 3)
         self.assertEqual(len(set(result)), 3)
@@ -69,7 +78,7 @@ class AiTest(unittest.TestCase):
     def test_every_missing_field_can_be_asked_without_reasking_known_basics(self):
         for missing in ai.FIELDS:
             with self.subTest(missing=missing):
-                fields = TaskFields(**{name: "Known" for name in ai.FIELDS if name != missing})
+                fields = TaskFields(**{**self.KNOWN_FIELDS, missing: ""})
                 result = ai.questions(fields)
                 self.assertIn(ai.FIELD_QUESTIONS[missing], result)
                 for known in ai.FIELDS:
@@ -150,12 +159,32 @@ class AiTest(unittest.TestCase):
             self.assertEqual(ai.last_source.get(), "fallback")
 
     def test_provider_cannot_reask_known_basics_or_skip_only_missing_field(self):
-        fields = TaskFields(**{name: "Known" for name in ai.FIELDS if name != "constraints"})
+        fields = TaskFields(**{**self.KNOWN_FIELDS, "constraints": ""})
         invalid = [ai.FIELD_QUESTIONS[name] for name in ("context", "need", "users")]
         fallback = ai.questions(fields)
         with self.provider(completion(json.dumps({"questions": invalid}))):
             self.assertEqual(ai.questions(fields), fallback)
             self.assertEqual(ai.last_source.get(), "fallback")
+
+    def test_questions_prioritize_unknown_facts_over_title_and_topic(self):
+        fields = TaskFields(**{name: "Не знаю" for name in ai.FIELDS})
+        result = ai.questions(fields)
+        for name in ("data_materials", "users", "expected_result", "success_criteria"):
+            self.assertIn(ai.FIELD_QUESTIONS[name], result)
+        cosmetic = [*ai.CLARIFICATIONS["title"], ai.FIELD_QUESTIONS["topic"]]
+        with self.provider(completion(json.dumps({"questions": cosmetic}))):
+            self.assertEqual(ai.questions(fields), result)
+            self.assertEqual(ai.last_source.get(), "fallback")
+        valid = [ai.FIELD_QUESTIONS[name] for name in ("data_materials", "users", "expected_result")]
+        with self.provider(completion(json.dumps({"questions": valid}))):
+            self.assertEqual(ai.questions(fields), valid)
+            self.assertEqual(ai.last_source.get(), "openai")
+
+    def test_unmeasured_criterion_is_missing_even_when_nonempty(self):
+        fields = TaskFields(**{**self.KNOWN_FIELDS, "success_criteria": "Улучшить качество"})
+        result = ai.questions(fields)
+        self.assertIn(ai.FIELD_QUESTIONS["success_criteria"], result)
+        self.assertNotIn(ai.FIELD_QUESTIONS["users"], result)
 
     def test_provider_extracts_valid_full_card_without_changing_original(self):
         fields = TaskFields(title="  Original  ", context="Initial description")
