@@ -30,5 +30,6 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/tasks -Headers $he
 - Проверено: вопросы возвращают 5 вопросов для пустого черновика, compose сохраняет ответ пользователя и игнорирует неизвестные сведения.
 - Проверено: каталог сортирует опубликованные задачи по рейтингу, принимает фильтры `topic` и `level`, а опубликованная задача с низким рейтингом остаётся доступна.
 - Проверено: две команды могут отправить предложения, выбор одного предложения не изменяет статус второго (`selected` и `pending`).
-- Текущий шаг: следующий этап после push, этапы и баллы команды.
+- Проверено: команда не может подтвердить свой этап, бизнес получает `confirmed` и 10 баллов, повторная проверка остаётся идемпотентной.
+- Текущий шаг: финальная интеграционная проверка и запуск.
 The API never calls an external AI provider in the MVP. The questions and compose endpoint use deterministic server-side validation and leave unknown fields empty. No API key is required or stored in Git.
