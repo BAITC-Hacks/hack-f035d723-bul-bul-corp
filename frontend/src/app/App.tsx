@@ -1,4 +1,6 @@
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { CatalogPage } from "../features/catalog/CatalogPage";
+import { TaskDetailsPage } from "../features/catalog/TaskDetailsPage";
 import { useDemoSession } from "./DemoSession";
 
 const navigation = [
@@ -34,7 +36,8 @@ export function App() {
       <main className="main-content" id="main-content">
         <Routes>
           <Route path="/" element={<Navigate to="/catalog" replace />} />
-          <Route path="/catalog" element={<SectionPage section="catalog" />} />
+          <Route path="/catalog" element={<CatalogPage />} />
+          <Route path="/catalog/:taskId" element={<TaskDetailsPage />} />
           <Route path="/constructor" element={<SectionPage section="constructor" />} />
           <Route path="/business" element={<SectionPage section="business" />} />
           <Route path="/team" element={<SectionPage section="team" />} />
