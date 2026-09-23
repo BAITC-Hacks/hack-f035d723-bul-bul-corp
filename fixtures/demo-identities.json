@@ -1,0 +1,9 @@
+[
+  {"id":"business-demo","name":"Демонстрационная компания","role":"business","team_id":null,"interests":[],"skills":[],"technologies":[]},
+  {"id":"business-second","name":"Учебный центр Вектор","role":"business","team_id":null,"interests":[],"skills":[],"technologies":[]},
+  {"id":"team-alpha","name":"Альфа","role":"team","team_id":"team-alpha","interests":["Услуги","Аналитика"],"skills":["Анализ данных","API"],"technologies":["Python","SQLite"]},
+  {"id":"team-beta","name":"Бета","role":"team","team_id":"team-beta","interests":["Образование"],"skills":["Веб-разработка","UX"],"technologies":["TypeScript","React"]},
+  {"id":"team-gamma","name":"Гамма","role":"team","team_id":"team-gamma","interests":["Логистика"],"skills":["Оптимизация","Визуализация"],"technologies":["Python","Pandas"]},
+  {"id":"team-delta","name":"Дельта","role":"team","team_id":"team-delta","interests":["Экология"],"skills":["Исследования","Картография"],"technologies":["JavaScript","Leaflet"]},
+  {"id":"team-epsilon","name":"Эпсилон","role":"team","team_id":"team-epsilon","interests":["Производство"],"skills":["Проектирование интерфейсов","Тестирование"],"technologies":["React","FastAPI"]}
+]
